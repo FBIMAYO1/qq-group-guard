@@ -6,6 +6,7 @@
   /查询 @某人      - 查看某人违规记录
   /刷新 @某人 [N]  - 重置违规次数（默认0），可指定到几
   /添加违规 @某人 [N] - 手动添加违规次数（默认1次）
+  /撤销 @某人      - 撤销最近一条违规
   /禁言 @某人 分钟  - 手动禁言
   /解禁 @某人      - 解除禁言
   /踢出 @某人      - 踢出群聊
@@ -19,6 +20,7 @@
   /全员警告 文字   - @全体并发送警告通知
 """
 
+import re
 from nonebot import on_command, logger
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -26,8 +28,6 @@ from nonebot.adapters.onebot.v11 import (
     Message,
     MessageSegment,
 )
-from nonebot.params import CommandArg
-from nonebot.permission import SUPERUSER
 
 from .storage import get_storage
 from .config import GroupGuardConfig
@@ -42,6 +42,47 @@ plugin_config = GroupGuardConfig()
 
 async def is_admin(event: GroupMessageEvent) -> bool:
     return event.sender.role in ("admin", "owner")
+
+
+# ============================================================
+# 工具函数（直接从 event 提取，不依赖 CommandArg）
+# ============================================================
+
+def _get_cmd_text(event: GroupMessageEvent) -> str:
+    """获取去除命令前缀后的纯文本参数"""
+    text = event.get_plaintext().strip()
+    # 去掉命令前缀 / ！ !
+    for prefix in ("/", "！", "!"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    # 去掉命令名（第一个词），返回剩余部分
+    parts = text.split(None, 1)
+    if len(parts) > 1:
+        return parts[1].strip()
+    return ""
+
+
+def _extract_at_target(event: GroupMessageEvent) -> int | None:
+    """从原始消息段中提取被@的用户QQ号（排除@all和机器人自身）"""
+    bot_qq = str(event.self_id)
+    for seg in event.message:
+        if seg.type == "at":
+            qq = str(seg.data.get("qq", "0"))
+            if qq == "all":
+                continue
+            if qq == bot_qq:
+                continue
+            return int(qq) or None
+    return None
+
+
+def _extract_number(text: str) -> int | None:
+    """从文本中提取第一个数字"""
+    match = re.search(r'\d+', text)
+    if match:
+        return int(match.group())
+    return None
 
 
 # ============================================================
@@ -68,7 +109,7 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "  /禁言 @某人 分钟 — 手动禁言\n"
         "  /解禁 @某人 — 解除禁言\n"
         "  /踢出 @某人 — 踢出群聊\n"
-        "  /撤回 @某人 — 撤回最近消息\n\n"
+        "  /撤回 [@某人] — 撤回消息（可回复消息后发/撤回）\n\n"
         "🛡 白名单\n"
         "  /白名单 @某人 — 加入豁免名单\n"
         "  /取消白名单 @某人 — 移除豁免\n"
@@ -90,10 +131,11 @@ query_cmd = on_command("查询", aliases={"记录"}, priority=5, rule=is_admin, 
 
 
 @query_cmd.handle()
-async def handle_query(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_query(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await query_cmd.finish("❌ 用法：/查询 @某人")
+        return
 
     storage = get_storage()
     group_id = str(event.group_id)
@@ -106,9 +148,9 @@ async def handle_query(bot: Bot, event: GroupMessageEvent, args: Message = Comma
     if count == 0:
         wl_tag = " 🛡白名单" if is_wl else ""
         await query_cmd.finish(f"[CQ:at,qq={target_id}] 暂无违规记录 ✅{wl_tag}")
+        return
 
     recent = records[-5:]
-    # 计算下次处罚
     if count < 3:
         next_punish = "⚠️ 警告"
     else:
@@ -135,12 +177,13 @@ refresh_cmd = on_command("刷新", aliases={"清除记录", "清记录"}, priori
 
 
 @refresh_cmd.handle()
-async def handle_refresh(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_refresh(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await refresh_cmd.finish("❌ 用法：/刷新 @某人 [次数]\n默认归零，可指定次数如 /刷新 @某人 2")
+        return
 
-    target_count = _extract_number(args) or 0
+    target_count = _extract_number(_get_cmd_text(event)) or 0
 
     storage = get_storage()
     storage.set_violation_count(str(event.group_id), str(target_id), target_count)
@@ -157,12 +200,13 @@ add_vio_cmd = on_command("添加违规", aliases={"加违规", "违规+"}, prior
 
 
 @add_vio_cmd.handle()
-async def handle_add_violation(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_add_violation(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await add_vio_cmd.finish("❌ 用法：/添加违规 @某人 [次数]\n如 /添加违规 @某人 2")
+        return
 
-    add_count = _extract_number(args) or 1
+    add_count = _extract_number(_get_cmd_text(event)) or 1
 
     storage = get_storage()
     new_count = storage.add_manual_violation(
@@ -181,10 +225,11 @@ undo_cmd = on_command("撤销", aliases={"撤销违规", "回退"}, priority=5, 
 
 
 @undo_cmd.handle()
-async def handle_undo(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_undo(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await undo_cmd.finish("❌ 用法：/撤销 @某人")
+        return
 
     storage = get_storage()
     success = storage.remove_last_violation(str(event.group_id), str(target_id))
@@ -206,12 +251,13 @@ mute_cmd = on_command("禁言", aliases={"mute", "闭嘴"}, priority=5, rule=is_
 
 
 @mute_cmd.handle()
-async def handle_mute(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_mute(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await mute_cmd.finish("❌ 用法：/禁言 @某人 分钟数\n如 /禁言 @某人 30")
+        return
 
-    duration_min = _extract_number(args) or 10
+    duration_min = _extract_number(_get_cmd_text(event)) or 10
     duration_sec = duration_min * 60
 
     try:
@@ -237,10 +283,11 @@ unmute_cmd = on_command("解禁", aliases={"unmute", "解除禁言", "取消禁�
 
 
 @unmute_cmd.handle()
-async def handle_unmute(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_unmute(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await unmute_cmd.finish("❌ 用法：/解禁 @某人")
+        return
 
     try:
         await bot.set_group_ban(
@@ -261,15 +308,15 @@ kick_cmd = on_command("踢出", aliases={"kick", "踢了", "T"}, priority=5, rul
 
 
 @kick_cmd.handle()
-async def handle_kick(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_kick(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await kick_cmd.finish("❌ 用法：/踢出 @某人")
+        return
 
-    # 提取附言
-    text = args.extract_plain_text().strip()
-    text = text.replace(str(target_id), "").strip()
-    reason = text if text else "违反群规"
+    # 提取附言（去除 at 号和数字后的文字）
+    text = _get_cmd_text(event)
+    reason = re.sub(r'\d+', '', text).strip() or "违反群规"
 
     try:
         await bot.set_group_kick(
@@ -286,14 +333,14 @@ async def handle_kick(bot: Bot, event: GroupMessageEvent, args: Message = Comman
 
 
 # ============================================================
-# /撤回 @某人
+# /撤回 — 回复消息后发送，或 @某人 撤回其最近消息
 # ============================================================
 
 recall_cmd = on_command("撤回", aliases={"recall", "撤"}, priority=5, rule=is_admin, block=True)
 
 
 @recall_cmd.handle()
-async def handle_recall(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+async def handle_recall(bot: Bot, event: GroupMessageEvent):
     # 如果是回复消息，撤回被回复的那条
     if event.reply:
         try:
@@ -301,20 +348,27 @@ async def handle_recall(bot: Bot, event: GroupMessageEvent, args: Message = Comm
             await recall_cmd.finish("✅ 已撤回该消息")
         except Exception as e:
             await recall_cmd.finish(f"❌ 撤回失败：{e}")
-    else:
-        await recall_cmd.finish("❌ 请回复你要撤回的消息，然后发送 /撤回")
+        return
+
+    # 检查是否 @了某人 — 没@也没回复就是用法错误
+    target_id = _extract_at_target(event)
+    if not target_id:
+        await recall_cmd.finish("❌ 请回复要撤回的消息后发送 /撤回\n或使用 /撤回 @某人")
+        return
+
+    await recall_cmd.finish(f"💡 提示：请直接回复对方的消息，然后发送 /撤回")
 
 
 # ============================================================
-# /白名单 @某人
+# /白名单
 # ============================================================
 
 wl_add_cmd = on_command("白名单", aliases={"加白", "豁免"}, priority=5, rule=is_admin, block=True)
 
 
 @wl_add_cmd.handle()
-async def handle_whitelist(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_whitelist(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     group_id = str(event.group_id)
     storage = get_storage()
 
@@ -332,7 +386,7 @@ async def handle_whitelist(bot: Bot, event: GroupMessageEvent, args: Message = C
     # @了人 → 加入白名单
     storage.add_to_whitelist(group_id, str(target_id))
     await wl_add_cmd.finish(
-        f"🛡 已将 [CQ:at,qq={target_id}] 加入白名单\n该用户不再受AI检索检测"
+        f"🛡 已将 [CQ:at,qq={target_id}] 加入白名单\n该用户不再受AI检测"
     )
 
 
@@ -344,10 +398,11 @@ wl_remove_cmd = on_command("取消白名单", aliases={"去白", "移除白名�
 
 
 @wl_remove_cmd.handle()
-async def handle_whitelist_remove(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    target_id = _extract_at_target(args)
+async def handle_whitelist_remove(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
     if not target_id:
         await wl_remove_cmd.finish("❌ 用法：/取消白名单 @某人")
+        return
 
     storage = get_storage()
     success = storage.remove_from_whitelist(str(event.group_id), str(target_id))
@@ -366,14 +421,15 @@ leaderboard_cmd = on_command("排行榜", aliases={"lb", "排名", "榜单"}, pr
 
 
 @leaderboard_cmd.handle()
-async def handle_leaderboard(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    top_n = _extract_number(args) or 10
+async def handle_leaderboard(bot: Bot, event: GroupMessageEvent):
+    top_n = _extract_number(_get_cmd_text(event)) or 10
 
     storage = get_storage()
     lb = storage.get_violation_leaderboard(str(event.group_id), top_n)
 
     if not lb:
         await leaderboard_cmd.finish("🏆 本群暂无违规记录，大家都很棒！")
+        return
 
     lines = ["🏆 违规排行榜", "━━━━━━━━━━━━━━"]
     medals = ["🥇", "🥈", "🥉"]
@@ -392,8 +448,8 @@ toggle_cmd = on_command("群管开关", aliases={"开关", "启用", "停用"}, 
 
 
 @toggle_cmd.handle()
-async def handle_toggle(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    text = args.extract_plain_text().strip()
+async def handle_toggle(bot: Bot, event: GroupMessageEvent):
+    text = _get_cmd_text(event)
 
     if text in ("开", "on", "启用", "打开"):
         plugin_config.guard_enabled = True
@@ -402,7 +458,6 @@ async def handle_toggle(bot: Bot, event: GroupMessageEvent, args: Message = Comm
         plugin_config.guard_enabled = False
         await toggle_cmd.finish("⏸️ 群管机器人已**停用**，将不再自动检测")
     else:
-        # 没参数就切换
         plugin_config.guard_enabled = not plugin_config.guard_enabled
         state = "✅ 已启用" if plugin_config.guard_enabled else "⏸️ 已停用"
         await toggle_cmd.finish(f"{state}\n用法：/群管开关 开|关")
@@ -447,35 +502,12 @@ announce_cmd = on_command("全员警告", aliases={"全员通知", "广播"}, pr
 
 
 @announce_cmd.handle()
-async def handle_announce(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
-    text = args.extract_plain_text().strip()
+async def handle_announce(bot: Bot, event: GroupMessageEvent):
+    text = _get_cmd_text(event)
     if not text:
         await announce_cmd.finish("❌ 用法：/全员警告 警告内容")
+        return
 
     msg = f"📢 **群管理通知**\n[CQ:at,qq=all]\n\n{text}"
     await bot.send_group_msg(group_id=event.group_id, message=msg)
     await announce_cmd.finish("✅ 已发送")
-
-
-# ============================================================
-# 工具函数
-# ============================================================
-
-def _extract_at_target(msg: Message) -> int | None:
-    """从消息中提取被@的用户QQ号"""
-    for seg in msg:
-        if seg.type == "at":
-            qq = seg.data.get("qq", "0")
-            if qq == "all":
-                continue
-            return int(qq) or None
-    return None
-
-
-def _extract_number(msg: Message) -> int | None:
-    """从消息中提取第一个数字"""
-    text = msg.extract_plain_text().strip()
-    for part in text.split():
-        if part.lstrip("-").isdigit():
-            return int(part)
-    return None
