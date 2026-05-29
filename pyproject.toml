@@ -1,0 +1,15 @@
+[project]
+name = "qq-group-guard"
+version = "0.1.0"
+description = "QQ群管理机器人 - 基于NoneBot2"
+requires-python = ">=3.10"
+
+[tool.nonebot]
+adapters = [
+    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
+]
+plugins = ["plugins.group_guard"]
+builtin_plugins = []
+
+[tool.nonebot.env]
+environment = "prod"
