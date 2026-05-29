@@ -24,6 +24,9 @@ plugin_config = GroupGuardConfig()
 # 导入管理命令（注册 /帮助 /查询 等命令）
 from . import admin_cmd  # noqa: F401, E402
 
+# 导入企鹅角色扮演（注册 @机器人 趣味聊天）
+from . import penguin_chat  # noqa: F401, E402
+
 
 # ============================================================
 # 规则：只处理群消息，且发送者不在白名单中
