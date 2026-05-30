@@ -1,12 +1,15 @@
 """
 违规记录存储 - 使用 JSON 文件持久化
 
+每日清零规则：每天0点自动清零所有用户的违规计数，历史记录保留。
+
 存储结构：
 {
     "群号": {
         "_whitelist": ["QQ号1", "QQ号2"],
+        "_last_reset": "2026-05-30",
         "用户QQ号": {
-            "count": 违规次数,
+            "count": 今日违规次数,
             "records": [...]
         }
     }
@@ -43,10 +46,12 @@ class ViolationStorage:
     """违规记录存储管理"""
 
     WHITELIST_KEY = "_whitelist"
+    RESET_KEY = "_last_reset"
 
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._data: dict = self._load()
+        self._check_daily_reset()
 
     def _load(self) -> dict:
         """从文件加载数据"""
@@ -64,6 +69,34 @@ class ViolationStorage:
             json.dump(self._data, f, ensure_ascii=False, indent=2)
 
     # ============================================================
+    # 每日清零
+    # ============================================================
+
+    @staticmethod
+    def _today() -> str:
+        """返回今天日期字符串 YYYY-MM-DD"""
+        return time.strftime("%Y-%m-%d")
+
+    def _check_daily_reset(self):
+        """检查所有群是否到了新的一天，是则清零计数（保留历史记录）"""
+        today = self._today()
+        changed = False
+        for gid in list(self._data.keys()):
+            last_reset = self._data[gid].get(self.RESET_KEY, "")
+            if last_reset != today:
+                # 新的一天 → 清零所有用户的 count
+                for uid in list(self._data[gid].keys()):
+                    if uid in (self.WHITELIST_KEY, self.RESET_KEY):
+                        continue
+                    info = self._data[gid][uid]
+                    if isinstance(info, dict) and info.get("count", 0) > 0:
+                        info["count"] = 0
+                self._data[gid][self.RESET_KEY] = today
+                changed = True
+        if changed:
+            self._save()
+
+    # ============================================================
     # 违规记录
     # ============================================================
 
@@ -75,7 +108,8 @@ class ViolationStorage:
         matched: str,
         action: str,
     ) -> int:
-        """记录一次违规，返回当前累计次数"""
+        """记录一次违规，返回当前今日累计次数"""
+        self._check_daily_reset()
         self._ensure_group(group_id)
         self._ensure_user(group_id, user_id)
 
@@ -98,6 +132,7 @@ class ViolationStorage:
         reason: str = "管理员手动添加",
     ) -> int:
         """管理员手动添加违规记录"""
+        self._check_daily_reset()
         self._ensure_group(group_id)
         self._ensure_user(group_id, user_id)
 
@@ -149,7 +184,8 @@ class ViolationStorage:
             return False
 
     def get_violation_count(self, group_id: str, user_id: str) -> int:
-        """获取用户在某群的违规次数"""
+        """获取用户在某群的违规次数（今日）"""
+        self._check_daily_reset()
         try:
             return self._data[group_id][user_id]["count"]
         except KeyError:
@@ -172,13 +208,14 @@ class ViolationStorage:
             return False
 
     def get_group_stats(self, group_id: str) -> dict[str, int]:
-        """获取群内所有用户的违规次数统计（不含白名单标记）"""
+        """获取群内所有用户的违规次数统计（今日，不含白名单标记）"""
+        self._check_daily_reset()
         if group_id not in self._data:
             return {}
         return {
             uid: info["count"]
             for uid, info in self._data[group_id].items()
-            if uid != self.WHITELIST_KEY and isinstance(info, dict)
+            if uid not in (self.WHITELIST_KEY, self.RESET_KEY) and isinstance(info, dict)
         }
 
     def get_violation_leaderboard(
