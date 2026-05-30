@@ -33,6 +33,9 @@ from . import brainwash  # noqa: F401, E402
 # 导入情绪安慰模块（注册负面情绪检测）
 from . import comfort  # noqa: F401, E402
 
+# 导入早安短报模块（注册每天早上8:00定时任务）
+from . import morning_brief  # noqa: F401, E402
+
 
 # ============================================================
 # 规则：只处理群消息，且发送者不在白名单中

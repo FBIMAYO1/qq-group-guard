@@ -18,6 +18,7 @@
   /排行榜 [N]      - 违规排行榜（默认前10）
   /群管开关        - 启用/停用自动检测
   /群管状态        - 查看运行状态
+  /洗脑 @某人     - 手动对某人发起凑企鹅洗脑
   /全员警告 文字   - @全体并发送警告通知
 """
 
@@ -116,6 +117,8 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "  /白名单 @某人 — 加入豁免名单\n"
         "  /取消白名单 @某人 — 移除豁免\n"
         "  /白名单 — 查看豁免列表\n\n"
+        "🎮 趣味\n"
+        "  /洗脑 @某人 — 手动发起凑企鹅洗脑\n\n"
         "⚙ 系统\n"
         "  /群管开关 — 启用/停用自动检测\n"
         "  /全员警告 文字 — @all发通知\n"
@@ -547,6 +550,29 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
     )
 
     await status_cmd.finish(msg)
+
+
+# ============================================================
+# /洗脑 @某人 — 手动触发凑企鹅洗脑
+# ============================================================
+
+brainwash_cmd = on_command("洗脑", aliases={"凑企鹅洗脑"}, priority=5, rule=is_admin, block=True)
+
+
+@brainwash_cmd.handle()
+async def handle_brainwash(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
+    if not target_id:
+        await brainwash_cmd.finish("❌ 用法：/洗脑 @某人")
+        return
+
+    from . import brainwash
+
+    try:
+        result = await brainwash.brainwash_target(bot, event.group_id, target_id)
+        await brainwash_cmd.finish(result)
+    except Exception as e:
+        await brainwash_cmd.finish(f"❌ 洗脑失败：{e}")
 
 
 # ============================================================

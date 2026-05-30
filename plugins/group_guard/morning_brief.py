@@ -1,0 +1,273 @@
+"""
+早安短报模块
+
+每天早上8:00 @全体成员发送早安短报，包含：
+1. 当天日期 + 问候语
+2. 今日热点新闻（3-5条）
+3. 距离最近法定节假日的倒计时
+"""
+
+import asyncio
+import json
+from datetime import datetime, date, timedelta
+
+import httpx
+from nonebot import on_message, get_driver, get_bots, logger
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
+
+
+# ============================================================
+# 法定节假日（2026年，日期为放假起始日）
+# ============================================================
+HOLIDAYS_2026 = [
+    ("元旦",       date(2026, 1,  1),  "🎉 新的一年开始啦"),
+    ("春节",       date(2026, 2, 17),  "🧧 新春快乐，阖家团圆"),
+    ("清明节",     date(2026, 4,  5),  "🌿 踏青祭祖，缅怀先人"),
+    ("劳动节",     date(2026, 5,  1),  "💪 致敬每一位劳动者"),
+    ("端午节",     date(2026, 6, 19),  "🐲 粽叶飘香，龙舟竞渡"),
+    ("中秋节",     date(2026, 9, 25),  "🌕 月圆人团圆"),
+    ("国庆节",     date(2026, 10, 1),  "🇨🇳 祖国生日快乐"),
+]
+
+# 新闻API列表（按优先级尝试，任一成功即用）
+NEWS_APIS = [
+    {
+        "name": "tenapi",
+        "url": "https://tenapi.cn/v2/toutiaohot",
+        "parser": "tenapi",
+    },
+    {
+        "name": "vvhan",
+        "url": "https://api.vvhan.com/api/hotlist?type=zhihuHot",
+        "parser": "vvhan",
+    },
+]
+
+NEWS_COUNT = 5  # 最多展示5条新闻
+
+
+# ============================================================
+# 状态：记录已发过的群（每天每条群只发一次）
+# ============================================================
+_sent_today: dict[str, set[str]] = {}  # date_str -> set(group_id)
+
+
+# ============================================================
+# 新闻获取
+# ============================================================
+
+def _parse_tenapi(data: dict) -> list[str]:
+    """解析 tenapi 返回格式: {code:200, data:[{name:"xxx"}, ...]}"""
+    items = data.get("data", [])
+    headlines = []
+    for item in items[:NEWS_COUNT]:
+        name = item.get("name", "")
+        if name:
+            headlines.append(name)
+    return headlines
+
+
+def _parse_vvhan(data: dict) -> list[str]:
+    """解析 vvhan 返回格式: {success:true, data:[{title:"xxx"}, ...]}"""
+    items = data.get("data", [])
+    headlines = []
+    for item in items[:NEWS_COUNT]:
+        title = item.get("title", "") or item.get("name", "") or item.get("desc", "")
+        if title:
+            headlines.append(title)
+    return headlines
+
+
+async def _fetch_news() -> list[str]:
+    """依次尝试多个新闻API，返回头条列表"""
+    for api in NEWS_APIS:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(api["url"], headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                if resp.status_code != 200:
+                    logger.warning(f"[早报] {api['name']} 返回 {resp.status_code}")
+                    continue
+
+                data = resp.json()
+                if api["parser"] == "tenapi":
+                    headlines = _parse_tenapi(data)
+                elif api["parser"] == "vvhan":
+                    headlines = _parse_vvhan(data)
+                else:
+                    continue
+
+                if headlines:
+                    logger.info(f"[早报] ✅ 使用 {api['name']} 获取到 {len(headlines)} 条新闻")
+                    return headlines
+                else:
+                    logger.warning(f"[早报] {api['name']} 解析结果为空")
+
+        except Exception as e:
+            logger.warning(f"[早报] {api['name']} 请求失败: {e}")
+            continue
+
+    return []
+
+
+# ============================================================
+# 节假日计算
+# ============================================================
+
+def _get_nearest_holiday(today: date) -> tuple[str, int, str]:
+    """
+    找到今天之后最近的法定节假日
+
+    Returns:
+        (节日名, 距离天数, emoji描述)
+    """
+    nearest = None
+    nearest_days = 99999
+
+    for name, d, desc in HOLIDAYS_2026:
+        if d >= today:
+            days = (d - today).days
+            if days < nearest_days:
+                nearest_days = days
+                nearest = (name, desc)
+
+    if nearest is None:
+        # 所有节日都已过 → 指向明年元旦
+        next_new_year = date(today.year + 1, 1, 1)
+        days = (next_new_year - today).days
+        return ("元旦", days, "🎉 新的一年即将到来")
+
+    if nearest_days == 0:
+        suffix = "就是今天！"
+    else:
+        suffix = f"还有 {nearest_days} 天"
+
+    return (nearest[0], nearest_days, nearest[1])
+
+
+# ============================================================
+# 构建早报文本
+# ============================================================
+
+async def _build_brief() -> str:
+    """构建早安短报完整内容"""
+    today = date.today()
+    today_str = today.strftime("%Y年%m月%d日")
+    weekday = ["一", "二", "三", "四", "五", "六", "日"][today.weekday()]
+    holiday_name, holiday_days, holiday_desc = _get_nearest_holiday(today)
+
+    # 问候语
+    lines = [f"☀️ @全体成员 早上好！今天是 {today_str} 星期{weekday}", ""]
+
+    # 新闻速报
+    headlines = await _fetch_news()
+    if headlines:
+        lines.append("📰 今日速报")
+        for i, h in enumerate(headlines, 1):
+            lines.append(f"  {i}. {h}")
+    else:
+        lines.append("📰 今日速报")
+        lines.append("  （暂未获取到新闻，请稍后查看）")
+
+    lines.append("")
+
+    # 节假日倒计时
+    if holiday_days == 0:
+        lines.append(f"🎊 今天是{holiday_name}！{holiday_desc}")
+    else:
+        lines.append(f"📅 距离【{holiday_name}】还有 {holiday_days} 天")
+        lines.append(f"   {holiday_desc}")
+
+    return "\n".join(lines)
+
+
+# ============================================================
+# 记录已发送的群 — 防止重启后重复发
+# ============================================================
+# 收集所有活跃群号
+_active_groups: set[str] = set()
+
+
+group_collector = on_message(priority=99, block=False)
+
+
+@group_collector.handle()
+async def _collect_group(event: GroupMessageEvent):
+    """记录所有出现过消息的群"""
+    _active_groups.add(str(event.group_id))
+
+
+# ============================================================
+# 定时早报任务
+# ============================================================
+async def _morning_brief_loop():
+    """每天早上8:00发送早报"""
+    await asyncio.sleep(8)
+
+    last_send_date = ""
+
+    while True:
+        try:
+            now = datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
+
+            # 新的一天
+            if today_str != last_send_date:
+                # 等到了8点再发
+                pass
+
+            # 检查是否到了8:00（±2分钟窗口，确保不会错过）
+            hour, minute = now.hour, now.minute
+            is_eight = (hour == 8 and 0 <= minute <= 2)
+
+            if is_eight and today_str != last_send_date:
+                last_send_date = today_str
+
+                bots = get_bots()
+                if not bots:
+                    logger.warning("[早报] 没有可用的Bot实例")
+                    await asyncio.sleep(60)
+                    continue
+
+                bot = list(bots.values())[0]
+
+                # 获取早报内容（含新闻请求）
+                brief = await _build_brief()
+
+                # 发送到所有已知的群
+                groups = list(_active_groups)
+                if not groups:
+                    logger.warning("[早报] 没有已知的活跃群")
+                else:
+                    sent_count = 0
+                    for gid in groups:
+                        try:
+                            await bot.send_group_msg(
+                                group_id=int(gid),
+                                message=brief,
+                            )
+                            sent_count += 1
+                            await asyncio.sleep(1.5)  # 群间间隔，避免风控
+                        except Exception as e:
+                            logger.error(f"[早报] 群{gid}发送失败: {e}")
+
+                    logger.info(f"[早报] ✅ 已发送到 {sent_count}/{len(groups)} 个群")
+
+        except Exception as e:
+            logger.error(f"[早报] 后台异常: {e}")
+
+        await asyncio.sleep(60)  # 每分钟检查一次
+
+
+# ============================================================
+# 注册启动钩子
+# ============================================================
+_driver = get_driver()
+
+
+@_driver.on_startup
+async def _start_morning_brief():
+    """NoneBot启动后拉起早安短报任务"""
+    asyncio.create_task(_morning_brief_loop())
+    logger.info("[早报] 📰 早安短报模块已启动，每天早上8:00发送")
