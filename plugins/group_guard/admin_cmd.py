@@ -1,8 +1,8 @@
 """
-管理员命令 - 供群主/管理员使用的控制命令
+管理员命令 - 供群主/管理员使用的控制命令（/帮助全员可用）
 
 命令列表：
-  /帮助            - 查看所有命令
+  /帮助            - 查看所有命令（全员可用）
   /查询 @某人      - 查看某人违规记录
   /历史 @某人      - 查看某人违规发言全文
   /刷新 @某人 [N]  - 重置违规次数（默认0），可指定到几
@@ -88,14 +88,20 @@ def _extract_number(text: str) -> int | None:
 # /帮助
 # ============================================================
 
-help_cmd = on_command("帮助", aliases={"help", "菜单", "命令"}, priority=3, rule=is_admin, block=True)
+help_cmd = on_command("帮助", aliases={"help", "菜单", "命令"}, priority=5, block=True)
 
 
 @help_cmd.handle()
 async def handle_help(bot: Bot, event: GroupMessageEvent):
     msg = (
-        "📋 **群管命令列表**\n"
+        "📋 **狗三命令列表**\n"
         "━━━━━━━━━━━━━━━━━━\n"
+        "📅 每日互动（全员可用）\n"
+        "  /签到 — 每日打卡领企鹅奖励\n"
+        "  /签到排行 [N] — 连续签到排行榜\n"
+        "  /抽签 — 今日运势抽签\n"
+        "  /活跃榜 [N] — 今日水群排行榜\n"
+        "  @机器人群聊 — 凑企鹅陪你聊天\n\n"
         "📊 记录查询\n"
         "  /查询 @某人 — 查看违规记录\n"
         "  /历史 @某人 — 违规发言全文\n"
@@ -118,7 +124,12 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "  /洗脑 @某人 — 手动发起凑企鹅洗脑\n\n"
         "⚙ 系统\n"
         "  /群管开关 — 启用/停用自动检测\n"
-        "  /全员警告 文字 — @all发通知\n"
+        "  /禁言开关 — 开启/关闭违规自动禁言\n"
+        "  /全员警告 文字 — @all发通知\n\n"
+        "🛡 自动防护（无需操作）\n"
+        "  AI违规检测 | 情绪安慰 | 广告拦截\n"
+        "  刷屏禁言 | 入群欢迎 | 早安短报\n"
+        "  狗三道歉 | 猫三豁免（骂机器人不判违规）\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "💡 所有命令以 / 开头，支持 ！ 和 ! 前缀"
     )
@@ -513,6 +524,37 @@ async def handle_toggle(bot: Bot, event: GroupMessageEvent):
 
 
 # ============================================================
+# /禁言开关
+# ============================================================
+
+mute_toggle_cmd = on_command("禁言开关", aliases={"禁言设置", "自动禁言"}, priority=5, rule=is_admin, block=True)
+
+
+@mute_toggle_cmd.handle()
+async def handle_mute_toggle(bot: Bot, event: GroupMessageEvent):
+    text = _get_cmd_text(event)
+
+    if text in ("开", "on", "启用", "打开"):
+        plugin_config.mute_enabled = True
+        logger.info(f"[管理] /禁言开关 开 群:{event.group_id} 操作者:{event.user_id}")
+        await mute_toggle_cmd.finish(
+            "🔇 自动禁言已**开启**\n"
+            "违规 ≥3 次将按阶梯规则禁言：第3次1h → 第4次2h → 第N次(N-2)h"
+        )
+    elif text in ("关", "off", "停用", "关闭"):
+        plugin_config.mute_enabled = False
+        logger.info(f"[管理] /禁言开关 关 群:{event.group_id} 操作者:{event.user_id}")
+        await mute_toggle_cmd.finish("🔇 自动禁言已**关闭**，违规仅作警告处理")
+    else:
+        plugin_config.mute_enabled = not plugin_config.mute_enabled
+        state = "✅ 已开启" if plugin_config.mute_enabled else "⏸️ 已关闭"
+        await mute_toggle_cmd.finish(
+            f"🔇 自动禁言：{state}\n"
+            f"用法：/禁言开关 开|关"
+        )
+
+
+# ============================================================
 # /群管状态
 # ============================================================
 
@@ -529,12 +571,14 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
     total_violations = sum(stats.values())
     total_users = len(stats)
     guard_state = "✅ 运行中" if plugin_config.guard_enabled else "⏸️ 已停用"
+    mute_state = "✅ 已开启" if plugin_config.mute_enabled else "⏸️ 已关闭（仅警告）"
 
     msg = (
         f"🤖 群管机器人状态\n"
         f"━━━━━━━━━━━━━━\n"
         f"检测引擎：DeepSeek AI\n"
         f"自动检测：{guard_state}\n"
+        f"自动禁言：{mute_state}\n"
         f"白名单人数：{len(wl)}\n"
         f"本群累计违规：{total_violations} 次\n"
         f"涉事用户数：{total_users} 人"

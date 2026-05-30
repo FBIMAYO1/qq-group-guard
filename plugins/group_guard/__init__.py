@@ -26,6 +26,9 @@ from . import admin_cmd  # noqa: F401, E402
 # 导入企鹅角色扮演（注册 @机器人 趣味聊天）
 from . import penguin_chat  # noqa: F401, E402
 
+# 导入机器人自我防御（注册狗三道歉 + 猫三豁免）
+from . import bot_defense  # noqa: F401, E402
+
 # 导入洗脑模块（注册定时洗脑任务）
 from . import brainwash  # noqa: F401, E402
 
@@ -34,6 +37,24 @@ from . import comfort  # noqa: F401, E402
 
 # 导入早安短报模块（注册每天早上8:00定时任务）
 from . import morning_brief  # noqa: F401, E402
+
+# 导入签到打卡模块（注册 /签到 /签到排行 命令）
+from . import checkin  # noqa: F401, E402
+
+# 导入今日运势模块（注册 /抽签 /运势 命令）
+from . import fortune  # noqa: F401, E402
+
+# 导入入群欢迎模块（注册新成员入群欢迎通知）
+from . import welcome  # noqa: F401, E402
+
+# 导入活跃排行榜模块（注册消息收集器 + /活跃榜 命令）
+from . import activity_rank  # noqa: F401, E402
+
+# 导入刷屏检测模块（注册刷屏消息监听器）
+from . import spam_detector  # noqa: F401, E402
+
+# 导入广告/链接检测模块（注册广告消息监听器）
+from . import ad_detector  # noqa: F401, E402
 
 
 # ============================================================
@@ -111,6 +132,7 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
         f"群:{event.group_id} | "
         f"用户:{event.user_id} | "
         f"类别:{ai_result.category} | "
+        f"置信度:{ai_result.confidence:.2f} | "
         f"原因:{ai_result.reason} | "
         f"耗时:{ai_result.latency_seconds:.1f}s"
     )

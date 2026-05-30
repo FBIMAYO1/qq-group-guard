@@ -19,6 +19,9 @@ class GroupGuardConfig(BaseModel):
     # 启用的群（为空则所有群都启用）
     enabled_groups: list[str] = []
 
+    # 是否开启违规禁言（默认关闭，仅警告不禁言）
+    mute_enabled: bool = False
+
     # 是否尝试撤回违规消息
     recall_message: bool = True
 
