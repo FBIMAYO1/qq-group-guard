@@ -266,13 +266,15 @@ async def handle_mute(bot: Bot, event: GroupMessageEvent):
             user_id=target_id,
             duration=duration_sec,
         )
-        if duration_min >= 60:
-            text = f"{duration_min // 60}小时{duration_min % 60}分钟" if duration_min % 60 else f"{duration_min // 60}小时"
-        else:
-            text = f"{duration_min}分钟"
-        await mute_cmd.finish(f"🔇 已禁言 [CQ:at,qq={target_id}] {text}")
     except Exception as e:
         await mute_cmd.finish(f"❌ 禁言失败：{e}")
+        return
+
+    if duration_min >= 60:
+        text = f"{duration_min // 60}小时{duration_min % 60}分钟" if duration_min % 60 else f"{duration_min // 60}小时"
+    else:
+        text = f"{duration_min}分钟"
+    await mute_cmd.finish(f"🔇 已禁言 [CQ:at,qq={target_id}] {text}")
 
 
 # ============================================================
@@ -295,9 +297,11 @@ async def handle_unmute(bot: Bot, event: GroupMessageEvent):
             user_id=target_id,
             duration=0,
         )
-        await unmute_cmd.finish(f"✅ 已解除 [CQ:at,qq={target_id}] 的禁言")
     except Exception as e:
         await unmute_cmd.finish(f"❌ 解禁失败：{e}")
+        return
+
+    await unmute_cmd.finish(f"✅ 已解除 [CQ:at,qq={target_id}] 的禁言")
 
 
 # ============================================================
@@ -324,12 +328,15 @@ async def handle_kick(bot: Bot, event: GroupMessageEvent):
             user_id=target_id,
             reject_add_request=False,
         )
-        await bot.send_group_msg(
-            group_id=event.group_id,
-            message=f"🚫 [CQ:at,qq={target_id}] 已被移出群聊\n原因：{reason}",
-        )
     except Exception as e:
         await kick_cmd.finish(f"❌ 踢出失败（可能需要群主权限）：{e}")
+        return
+
+    await bot.send_group_msg(
+        group_id=event.group_id,
+        message=f"🚫 [CQ:at,qq={target_id}] 已被移出群聊\n原因：{reason}",
+    )
+    await kick_cmd.finish()
 
 
 # ============================================================
@@ -345,9 +352,10 @@ async def handle_recall(bot: Bot, event: GroupMessageEvent):
     if event.reply:
         try:
             await bot.delete_msg(message_id=event.reply.message_id)
-            await recall_cmd.finish("✅ 已撤回该消息")
         except Exception as e:
             await recall_cmd.finish(f"❌ 撤回失败：{e}")
+            return
+        await recall_cmd.finish("✅ 已撤回该消息")
         return
 
     # 检查是否 @了某人 — 没@也没回复就是用法错误
