@@ -92,8 +92,15 @@ DEEPSEEK_API_KEY=你的DeepSeek_Key
 
 ### 5. 启动
 
+**方式一：一键启动（推荐）**
+
+双击项目根目录下的 `start.bat`，自动启动 NapCat + 机器人。
+
+**方式二：手动启动**
+
 ```bash
-# 先确保NapCat已启动并登录
+# 1. 双击运行 NapCat 目录下的 napcat.bat，扫码登录
+# 2. 启动机器人
 python bot.py
 ```
 
