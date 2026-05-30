@@ -18,12 +18,13 @@ from nonebot import on_message, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 from nonebot.rule import Rule
 from .ai_checker import DEEPSEEK_MODEL, get_openai_client, _extract_json_from_raw
+from .group_config import get_group_config
 
 
 # ============================================================
-# 限流: user_id -> 上次安慰时间戳
+# 限流: (group_id, user_id) -> 上次安慰时间戳
 # ============================================================
-_cooldown: dict[str, float] = {}
+_cooldown: dict[tuple[str, str], float] = {}
 COOLDOWN_SECONDS = 1800  # 30分钟
 
 # ============================================================
@@ -148,13 +149,20 @@ async def handle_emotion(bot: Bot, event: GroupMessageEvent):
     """检测负面情绪并安慰（需连续多条负面消息才触发）"""
 
     user_id = str(event.user_id)
+    group_id = str(event.group_id)
     text = event.get_plaintext().strip()
     key = _buffer_key(event.group_id, user_id)
 
-    # ---- 限流检查 ----
+    # 检查功能开关
+    gcfg = get_group_config()
+    if not gcfg.get(group_id).comfort_enabled:
+        return
+
+    # ---- 限流检查（按群隔离）----
     now = time.time()
-    if user_id in _cooldown:
-        if now - _cooldown[user_id] < COOLDOWN_SECONDS:
+    cooldown_key = (group_id, user_id)
+    if cooldown_key in _cooldown:
+        if now - _cooldown[cooldown_key] < COOLDOWN_SECONDS:
             return  # 冷却中，沉默跳过
 
     # ---- 定期清理过期缓冲 ----
@@ -190,7 +198,7 @@ async def handle_emotion(bot: Bot, event: GroupMessageEvent):
         if has_emotion and emotion_type == "高危":
             comfort_msg = result.get("comfort", "").strip()
             if comfort_msg:
-                _cooldown[user_id] = now
+                _cooldown[cooldown_key] = now
                 # 高危触发时清空该用户缓冲，避免重复触发
                 _emotion_buffer.pop(key, None)
                 msg = f"[CQ:at,qq={user_id}] {comfort_msg}"
@@ -243,7 +251,7 @@ async def handle_emotion(bot: Bot, event: GroupMessageEvent):
         # 删除前捕获情结类型链用于日志
         emotion_chain = [e["emotion_type"] for e in buffer_entries]
 
-        _cooldown[user_id] = now
+        _cooldown[cooldown_key] = now
         # 触发后清空缓冲，避免连续刷屏
         del _emotion_buffer[key]
 

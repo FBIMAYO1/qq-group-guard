@@ -11,6 +11,8 @@ import random
 from nonebot import on_notice, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupIncreaseNoticeEvent
 
+from .group_config import get_group_config
+
 
 # ============================================================
 # 欢迎语池
@@ -38,6 +40,11 @@ welcome_notice = on_notice(priority=5, block=False)
 @welcome_notice.handle()
 async def handle_group_increase(bot: Bot, event: GroupIncreaseNoticeEvent):
     """新成员入群时发送欢迎消息"""
+    # 检查功能开关
+    gcfg = get_group_config()
+    if not gcfg.get(str(event.group_id)).welcome_enabled:
+        return
+
     # 跳过机器人自身入群
     if event.user_id == event.self_id:
         return

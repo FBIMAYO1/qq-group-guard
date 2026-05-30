@@ -3,13 +3,21 @@ name = "qq-group-guard"
 version = "0.1.0"
 description = "QQ群管理机器人 - 基于NoneBot2"
 requires-python = ">=3.10"
+dependencies = [
+    "nonebot2>=2.5.0",
+    "nonebot-adapter-onebot>=2.4.6",
+]
 
 [tool.nonebot]
-adapters = [
-    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
-]
-plugins = ["plugins.group_guard"]
 builtin_plugins = []
+plugin_dirs = []
+
+[tool.nonebot.plugins]
+"@local" = ["plugins.group_guard"]
+
+[tool.nonebot.adapters]
+"@local" = []
+nonebot-adapter-onebot = [{name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11"}]
 
 [tool.nonebot.env]
 environment = "prod"

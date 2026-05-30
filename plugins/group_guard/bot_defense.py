@@ -15,6 +15,7 @@ import re
 
 from nonebot import on_message, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
+from nonebot.rule import Rule
 
 
 # ============================================================
@@ -79,9 +80,25 @@ MAOSAN_SYMPATHY_MESSAGES = [
 
 
 # ============================================================
+# 规则：仅匹配含攻击词的消息
+# ============================================================
+async def _is_bot_insult(event: GroupMessageEvent) -> bool:
+    """只有匹配到狗三/猫三攻击模式的消息才进入此 handler"""
+    text = event.get_plaintext().strip()
+    if not text:
+        return False
+    return bool(
+        DOGSAN_INSULT_RE.search(text)
+        or DOGSAN_INSULT_LOOSE_RE.search(text)
+        or MAOSAN_INSULT_RE.search(text)
+        or MAOSAN_INSULT_LOOSE_RE.search(text)
+    )
+
+
+# ============================================================
 # 消息处理器（Priority 0，最高优先级拦截）
 # ============================================================
-bot_defense = on_message(priority=0, block=True)
+bot_defense = on_message(priority=0, rule=Rule(_is_bot_insult), block=True)
 
 
 @bot_defense.handle()

@@ -16,6 +16,7 @@ from nonebot import on_message, get_driver, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 
 from .config import plugin_config
+from .group_config import get_group_config
 
 
 # ============================================================
@@ -45,6 +46,11 @@ async def handle_spam(bot: Bot, event: GroupMessageEvent):
     gid = str(event.group_id)
     uid = str(event.user_id)
 
+    # 检查功能开关
+    gcfg = get_group_config()
+    if not gcfg.get(gid).spam_enabled:
+        return
+
     # 跳过管理员和群主
     if event.sender.role in ("admin", "owner"):
         return
@@ -72,9 +78,10 @@ async def handle_spam(bot: Bot, event: GroupMessageEvent):
         # 清空时间戳防止连锁触发
         _spam_tracker[gid][uid] = []
 
-        # 尝试禁言（受禁言开关控制）
+        # 尝试禁言（受禁言开关控制 — 按群独立）
         mute_min = MUTE_DURATION // 60
-        if plugin_config.mute_enabled:
+        mute_enabled = get_group_config().get(gid).mute_enabled
+        if mute_enabled:
             try:
                 await bot.set_group_ban(
                     group_id=event.group_id,
@@ -92,7 +99,7 @@ async def handle_spam(bot: Bot, event: GroupMessageEvent):
             )
 
         # 发送警告
-        mute_note = f"，企鹅送你{mute_min}分钟冷静期" if plugin_config.mute_enabled else "，禁言已关闭仅作警告"
+        mute_note = f"，企鹅送你{mute_min}分钟冷静期" if mute_enabled else "，禁言已关闭仅作警告"
         await bot.send_group_msg(
             group_id=event.group_id,
             message=(
@@ -103,7 +110,7 @@ async def handle_spam(bot: Bot, event: GroupMessageEvent):
 
         logger.info(
             f"[刷屏] 群:{gid} 用户:{uid} | "
-            f"{count}条/{SPAM_WINDOW}s → 禁言{'已关闭' if not plugin_config.mute_enabled else f'{mute_min}分钟'}"
+            f"{count}条/{SPAM_WINDOW}s → 禁言{'已关闭' if not mute_enabled else f'{mute_min}分钟'}"
         )
 
 

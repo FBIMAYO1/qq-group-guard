@@ -22,6 +22,8 @@ from nonebot import on_message, get_driver, get_bots, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 from nonebot.rule import Rule
 
+from .group_config import get_group_config
+
 
 # ============================================================
 # 配置
@@ -34,8 +36,8 @@ TRIGGER_FROM = 9            # 最早触发时间（小时）
 TRIGGER_TO = 23             # 最晚触发时间（小时）
 SPACING_MINUTES = 120       # 各触发点之间至少间隔2小时
 
-BRAINWASH_FIRST = "饿啊！你是凑企鹅你是凑企鹅，你是谁呀？"   # 首轮
-BRAINWASH_MSG = "你是凑企鹅，你是凑企鹅你是谁呀？"                # 追问轮
+BRAINWASH_FIRST = "饿啊！你是凑企鹅你是凑企鹅，你是谁呀？（回复请@我）"   # 首轮
+BRAINWASH_MSG = "你是凑企鹅，你是凑企鹅你是谁呀？（回复请@狗三）"                # 追问轮
 
 
 # ============================================================
@@ -126,12 +128,20 @@ async def _collect_active(event: GroupMessageEvent):
 # 洗脑回复检测器 — 最高优先级，检测被@的人是否回复
 # ============================================================
 async def _is_brainwash_target(event: GroupMessageEvent) -> bool:
-    """检查发消息的人是否正在被洗脑"""
+    """检查发消息的人是否正在被洗脑，且消息中@了机器人"""
     gid = str(event.group_id)
     uid = str(event.user_id)
-    if gid in _current_target:
-        target_uid, _, _ = _current_target[gid]
-        if uid == target_uid:
+    if gid not in _current_target:
+        return False
+
+    target_uid, _, _ = _current_target[gid]
+    if uid != target_uid:
+        return False
+
+    # 必须 @了机器人 才算有效回复
+    bot_qq = str(event.self_id)
+    for seg in event.message:
+        if seg.type == "at" and str(seg.data.get("qq", "")) == bot_qq:
             return True
     return False
 
@@ -252,7 +262,12 @@ async def _do_brainwash_check():
     bot = list(bots.values())[0]
 
     # ---- 遍历每个群，按条件洗脑 ----
+    gcfg = get_group_config()
     for gid, members in list(_active_members.items()):
+        # 检查功能开关
+        if not gcfg.get(gid).brainwash_enabled:
+            continue
+
         # 该群正在洗脑中（等回复），跳过
         if gid in _current_target:
             continue

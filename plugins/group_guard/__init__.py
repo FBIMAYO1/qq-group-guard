@@ -17,8 +17,15 @@ from .punisher import get_punisher
 from .ai_checker import get_ai_checker
 from .storage import get_storage
 from .config import plugin_config
+from .group_config import get_group_config
 
-# 加载配置（config.py 中的全局单例）
+# 加载配置（config.py 中的全局单例，兼容层）
+
+# 导入群配置存储（多群管理核心）
+# group_config 在 group_lifecycle 之前导入，确保单例已创建
+
+# 导入群生命周期管理（注册入群/退群/启动同步）
+from . import group_lifecycle  # noqa: F401, E402
 
 # 导入管理命令（注册 /帮助 /查询 等命令）
 from . import admin_cmd  # noqa: F401, E402
@@ -62,20 +69,27 @@ from . import ad_detector  # noqa: F401, E402
 # ============================================================
 
 async def is_group_msg_and_not_whitelisted(event: GroupMessageEvent) -> bool:
-    """判断是否需要检测该消息"""
-    if not plugin_config.guard_enabled:
+    """判断是否需要检测该消息（按群独立配置）"""
+    gid = str(event.group_id)
+
+    # 按群独立的 AI 检测开关（替代旧的全局 plugin_config.guard_enabled）
+    gcfg = get_group_config().get(gid)
+    if not gcfg.guard_enabled:
         return False
 
+    # 全局白名单（兼容层）
     if str(event.user_id) in plugin_config.whitelist_users:
         return False
 
-    # 持久化白名单检查
+    # 按群持久化白名单检查
     storage = get_storage()
-    if storage.is_whitelisted(str(event.group_id), str(event.user_id)):
+    if storage.is_whitelisted(gid, str(event.user_id)):
         return False
 
-    if plugin_config.enabled_groups:
-        if str(event.group_id) not in plugin_config.enabled_groups:
+    # 群过滤白名单（来自 group_config._global.enabled_groups）
+    enabled_groups = get_group_config().get_enabled_groups()
+    if enabled_groups:
+        if gid not in enabled_groups:
             return False
 
     # 跳过管理员和群主

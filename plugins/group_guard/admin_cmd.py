@@ -23,7 +23,7 @@
 """
 
 import re
-from nonebot import on_command, logger
+from nonebot import on_command, get_driver, logger
 from nonebot.adapters.onebot.v11 import (
     Bot,
     GroupMessageEvent,
@@ -33,6 +33,7 @@ from nonebot.adapters.onebot.v11 import (
 
 from .storage import get_storage
 from .config import plugin_config
+from .group_config import get_group_config
 
 
 # ============================================================
@@ -41,6 +42,16 @@ from .config import plugin_config
 
 async def is_admin(event: GroupMessageEvent) -> bool:
     return event.sender.role in ("admin", "owner")
+
+
+async def is_superuser(event: GroupMessageEvent) -> bool:
+    """检查是否是超级用户（.env 中 SUPERUSERS 配置的 QQ 号）"""
+    try:
+        driver = get_driver()
+        superusers = driver.config.superusers
+        return str(event.user_id) in superusers
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -106,7 +117,7 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "  /查询 @某人 — 查看违规记录\n"
         "  /历史 @某人 — 违规发言全文\n"
         "  /排行榜 [N] — 违规排行榜\n"
-        "  /群管状态 — 运行状态\n\n"
+        "  /群管状态 — 运行状态 + 功能开关\n\n"
         "🛠 记录管理\n"
         "  /刷新 @某人 [次数] — 重置违规次数（默认归零）\n"
         "  /添加违规 @某人 [N] — 手动加违规（默认+1）\n"
@@ -122,16 +133,21 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "  /白名单 — 查看豁免列表\n\n"
         "🎮 趣味\n"
         "  /洗脑 @某人 — 手动发起凑企鹅洗脑\n\n"
-        "⚙ 系统\n"
-        "  /群管开关 — 启用/停用自动检测\n"
-        "  /禁言开关 — 开启/关闭违规自动禁言\n"
-        "  /全员警告 文字 — @all发通知\n\n"
+        "⚙ 系统开关（仅影响当前群）\n"
+        "  /群管开关 — 启用/停用AI检测（本群）\n"
+        "  /禁言开关 — 开启/关闭自动禁言（本群）\n"
+        "  /功能开关 — 查看/切换各功能开关\n"
+        "  /全员警告 文字 — @all发通知\n"
+        "  /群列表 — 查看所有群状态（🔑超级用户）\n"
+        "  /全局默认 — 管理新群默认配置（🔑超级用户）\n"
+        "  /广播 — 向所有群发公告（🔑超级用户）\n\n"
         "🛡 自动防护（无需操作）\n"
         "  AI违规检测 | 情绪安慰 | 广告拦截\n"
-        "  刷屏禁言 | 入群欢迎 | 早安短报\n"
+        "  刷屏检测 | 入群欢迎 | 早安短报\n"
         "  狗三道歉 | 猫三豁免（骂机器人不判违规）\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "💡 所有命令以 / 开头，支持 ！ 和 ! 前缀"
+        "💡 所有命令以 / 开头，支持 ！ 和 ! 前缀\n"
+        "🔑 = 仅超级用户（.env SUPERUSERS）可用"
     )
     await help_cmd.finish(msg)
 
@@ -508,19 +524,22 @@ toggle_cmd = on_command("群管开关", aliases={"开关", "启用", "停用"}, 
 @toggle_cmd.handle()
 async def handle_toggle(bot: Bot, event: GroupMessageEvent):
     text = _get_cmd_text(event)
+    gid = str(event.group_id)
+    gcfg = get_group_config()
 
     if text in ("开", "on", "启用", "打开"):
-        plugin_config.guard_enabled = True
-        logger.info(f"[管理] /群管开关 开 群:{event.group_id} 操作者:{event.user_id}")
-        await toggle_cmd.finish("✅ 群管机器人已**启用**，将自动检测违规消息")
+        gcfg.set(gid, "guard_enabled", True)
+        logger.info(f"[管理] /群管开关 开 群:{gid} 操作者:{event.user_id}")
+        await toggle_cmd.finish("✅ 本群 AI 违规检测已**启用**")
     elif text in ("关", "off", "停用", "关闭"):
-        plugin_config.guard_enabled = False
-        logger.info(f"[管理] /群管开关 关 群:{event.group_id} 操作者:{event.user_id}")
-        await toggle_cmd.finish("⏸️ 群管机器人已**停用**，将不再自动检测")
+        gcfg.set(gid, "guard_enabled", False)
+        logger.info(f"[管理] /群管开关 关 群:{gid} 操作者:{event.user_id}")
+        await toggle_cmd.finish("⏸️ 本群 AI 违规检测已**停用**（不影响其他群）")
     else:
-        plugin_config.guard_enabled = not plugin_config.guard_enabled
-        state = "✅ 已启用" if plugin_config.guard_enabled else "⏸️ 已停用"
-        await toggle_cmd.finish(f"{state}\n用法：/群管开关 开|关")
+        current = gcfg.get(gid).guard_enabled
+        gcfg.set(gid, "guard_enabled", not current)
+        state = "✅ 已启用" if not current else "⏸️ 已停用"
+        await toggle_cmd.finish(f"{state}\n用法：/群管开关 开|关\n💡 此操作仅影响当前群")
 
 
 # ============================================================
@@ -533,24 +552,28 @@ mute_toggle_cmd = on_command("禁言开关", aliases={"禁言设置", "自动禁
 @mute_toggle_cmd.handle()
 async def handle_mute_toggle(bot: Bot, event: GroupMessageEvent):
     text = _get_cmd_text(event)
+    gid = str(event.group_id)
+    gcfg = get_group_config()
 
     if text in ("开", "on", "启用", "打开"):
-        plugin_config.mute_enabled = True
-        logger.info(f"[管理] /禁言开关 开 群:{event.group_id} 操作者:{event.user_id}")
+        gcfg.set(gid, "mute_enabled", True)
+        logger.info(f"[管理] /禁言开关 开 群:{gid} 操作者:{event.user_id}")
         await mute_toggle_cmd.finish(
-            "🔇 自动禁言已**开启**\n"
+            "🔇 本群自动禁言已**开启**\n"
             "违规 ≥3 次将按阶梯规则禁言：第3次1h → 第4次2h → 第N次(N-2)h"
         )
     elif text in ("关", "off", "停用", "关闭"):
-        plugin_config.mute_enabled = False
-        logger.info(f"[管理] /禁言开关 关 群:{event.group_id} 操作者:{event.user_id}")
-        await mute_toggle_cmd.finish("🔇 自动禁言已**关闭**，违规仅作警告处理")
+        gcfg.set(gid, "mute_enabled", False)
+        logger.info(f"[管理] /禁言开关 关 群:{gid} 操作者:{event.user_id}")
+        await mute_toggle_cmd.finish("🔇 本群自动禁言已**关闭**，违规仅作警告处理")
     else:
-        plugin_config.mute_enabled = not plugin_config.mute_enabled
-        state = "✅ 已开启" if plugin_config.mute_enabled else "⏸️ 已关闭"
+        current = gcfg.get(gid).mute_enabled
+        gcfg.set(gid, "mute_enabled", not current)
+        state = "✅ 已开启" if not current else "⏸️ 已关闭"
         await mute_toggle_cmd.finish(
-            f"🔇 自动禁言：{state}\n"
-            f"用法：/禁言开关 开|关"
+            f"🔇 本群自动禁言：{state}\n"
+            f"用法：/禁言开关 开|关\n"
+            f"💡 此操作仅影响当前群"
         )
 
 
@@ -570,21 +593,275 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
 
     total_violations = sum(stats.values())
     total_users = len(stats)
-    guard_state = "✅ 运行中" if plugin_config.guard_enabled else "⏸️ 已停用"
-    mute_state = "✅ 已开启" if plugin_config.mute_enabled else "⏸️ 已关闭（仅警告）"
+
+    gcfg = get_group_config()
+    config = gcfg.get(group_id)
+    all_groups = gcfg.list_groups()
+
+    guard_state = "✅ 运行中" if config.guard_enabled else "⏸️ 已停用"
+    mute_state = "✅ 已开启" if config.mute_enabled else "⏸️ 已关闭（仅警告）"
+
+    # 功能开关状态简表
+    feature_status = "\n".join([
+        f"  入群欢迎：{'✅' if config.welcome_enabled else '❌'} | "
+        f"早安短报：{'✅' if config.morning_brief_enabled else '❌'}",
+        f"  企鹅聊天：{'✅' if config.penguin_chat_enabled else '❌'} | "
+        f"情绪安慰：{'✅' if config.comfort_enabled else '❌'}",
+        f"  洗脑游戏：{'✅' if config.brainwash_enabled else '❌'} | "
+        f"刷屏检测：{'✅' if config.spam_enabled else '❌'}",
+        f"  广告拦截：{'✅' if config.ad_enabled else '❌'}",
+    ])
 
     msg = (
-        f"🤖 群管机器人状态\n"
+        f"🤖 狗三运行状态\n"
         f"━━━━━━━━━━━━━━\n"
         f"检测引擎：DeepSeek AI\n"
         f"自动检测：{guard_state}\n"
         f"自动禁言：{mute_state}\n"
         f"白名单人数：{len(wl)}\n"
-        f"本群累计违规：{total_violations} 次\n"
-        f"涉事用户数：{total_users} 人"
+        f"本群累计违规：{total_violations} 次（{total_users} 人）\n"
+        f"已管理群数：{len(all_groups)} 个群\n"
+        f"\n📋 功能开关状态：\n"
+        f"{feature_status}\n"
+        f"\n💡 使用 /功能开关 <功能名> 开|关 切换"
     )
 
     await status_cmd.finish(msg)
+
+
+# ============================================================
+# /功能开关 — 查看/切换各功能模块（仅影响当前群）
+# ============================================================
+
+FEATURE_MAP = {
+    "入群欢迎": "welcome_enabled",
+    "早安短报": "morning_brief_enabled",
+    "洗脑": "brainwash_enabled",
+    "情绪安慰": "comfort_enabled",
+    "企鹅聊天": "penguin_chat_enabled",
+    "刷屏检测": "spam_enabled",
+    "广告拦截": "ad_enabled",
+}
+
+FEATURE_LABELS = {
+    "welcome_enabled": "入群欢迎",
+    "morning_brief_enabled": "早安短报",
+    "brainwash_enabled": "洗脑",
+    "comfort_enabled": "情绪安慰",
+    "penguin_chat_enabled": "企鹅聊天",
+    "spam_enabled": "刷屏检测",
+    "ad_enabled": "广告拦截",
+}
+
+feature_toggle = on_command("功能开关", aliases={"功能"}, priority=5, rule=is_admin, block=True)
+
+
+@feature_toggle.handle()
+async def handle_feature_toggle(bot: Bot, event: GroupMessageEvent):
+    text = _get_cmd_text(event)
+    gid = str(event.group_id)
+    gcfg = get_group_config()
+    config = gcfg.get(gid)
+
+    # 无参数 → 显示所有功能开关状态
+    if not text:
+        lines = ["📋 当前群功能开关状态", "━━━━━━━━━━━━━━"]
+        for key, label in FEATURE_LABELS.items():
+            state = "✅" if getattr(config, key) else "❌"
+            lines.append(f"  {state} {label}")
+        lines.append("\n💡 用法：/功能开关 <功能名> 开|关")
+        lines.append("  如：/功能开关 洗脑 关")
+        await feature_toggle.finish("\n".join(lines))
+
+    # 解析参数
+    parts = text.split()
+    if len(parts) < 2:
+        await feature_toggle.finish(
+            "❌ 用法：/功能开关 <功能名> 开|关\n"
+            "如：/功能开关 洗脑 关\n"
+            "直接发 /功能开关 查看所有开关"
+        )
+
+    # 匹配功能名（支持模糊匹配）
+    feat_name = parts[0]
+    action = parts[1]
+
+    matched_key = None
+    for name, key in FEATURE_MAP.items():
+        if feat_name in name or name in feat_name:
+            matched_key = key
+            break
+
+    if not matched_key:
+        available = "、".join(FEATURE_MAP.keys())
+        await feature_toggle.finish(
+            f"❌ 未知功能「{feat_name}」\n可用功能：{available}"
+        )
+
+    if action in ("开", "on", "启用", "打开"):
+        gcfg.set(gid, matched_key, True)
+        await feature_toggle.finish(f"✅ 已在本群开启「{FEATURE_LABELS[matched_key]}」")
+    elif action in ("关", "off", "停用", "关闭"):
+        gcfg.set(gid, matched_key, False)
+        await feature_toggle.finish(f"❌ 已在本群关闭「{FEATURE_LABELS[matched_key]}」")
+    else:
+        current = getattr(config, matched_key)
+        state = "✅ 开启" if current else "❌ 关闭"
+        await feature_toggle.finish(
+            f"「{FEATURE_LABELS[matched_key]}」当前：{state}\n"
+            f"用法：/功能开关 {feat_name} 开|关"
+        )
+
+
+# ============================================================
+# /群列表 — 查看 bot 所在所有群（超级用户专用）
+# ============================================================
+
+group_list_cmd = on_command("群列表", aliases={"所有群"}, priority=5, rule=is_superuser, block=True)
+
+
+@group_list_cmd.handle()
+async def handle_group_list(bot: Bot, event: GroupMessageEvent):
+    gcfg = get_group_config()
+    all_groups = gcfg.list_groups()
+
+    if not all_groups:
+        await group_list_cmd.finish("📋 暂无已配置的群")
+
+    lines = [f"📋 狗三所在群列表（共 {len(all_groups)} 个）", "━━━━━━━━━━━━━━"]
+    for i, gid in enumerate(all_groups, 1):
+        config = gcfg.get(gid)
+        guard = "🟢" if config.guard_enabled else "🔴"
+        mute = "🔇" if config.mute_enabled else "⚠️"
+        lines.append(
+            f"  {i}. 群 {gid} | {guard}检测 {mute}禁言 | "
+            f"功能:{sum([config.welcome_enabled, config.morning_brief_enabled, config.brainwash_enabled, config.comfort_enabled, config.penguin_chat_enabled, config.spam_enabled, config.ad_enabled])}/7"
+        )
+
+    await group_list_cmd.finish("\n".join(lines))
+
+
+# ============================================================
+# /全局默认 — 管理新群默认配置（超级用户专用）
+# ============================================================
+
+DEFAULT_MAP = {
+    "禁言开关": "default_mute_enabled",
+    "群管开关": "default_guard_enabled",
+    "入群欢迎": "default_welcome_enabled",
+    "早安短报": "default_morning_brief_enabled",
+    "洗脑": "default_brainwash_enabled",
+    "情绪安慰": "default_comfort_enabled",
+    "企鹅聊天": "default_penguin_chat_enabled",
+    "刷屏检测": "default_spam_enabled",
+    "广告拦截": "default_ad_enabled",
+}
+
+DEFAULT_LABELS = {
+    "default_guard_enabled": "AI违规检测",
+    "default_mute_enabled": "自动禁言",
+    "default_welcome_enabled": "入群欢迎",
+    "default_morning_brief_enabled": "早安短报",
+    "default_brainwash_enabled": "洗脑",
+    "default_comfort_enabled": "情绪安慰",
+    "default_penguin_chat_enabled": "企鹅聊天",
+    "default_spam_enabled": "刷屏检测",
+    "default_ad_enabled": "广告拦截",
+}
+
+global_default_cmd = on_command("全局默认", aliases={"默认配置"}, priority=5, rule=is_superuser, block=True)
+
+
+@global_default_cmd.handle()
+async def handle_global_default(bot: Bot, event: GroupMessageEvent):
+    text = _get_cmd_text(event)
+    gcfg = get_group_config()
+
+    # 无参数 → 显示所有默认值
+    if not text:
+        defaults = gcfg.get_defaults()
+        lines = ["⚙ 全局默认配置（新群从此继承）", "━━━━━━━━━━━━━━"]
+        for key, label in DEFAULT_LABELS.items():
+            state = "✅" if getattr(defaults, key) else "❌"
+            lines.append(f"  {state} {label}")
+        lines.append("\n💡 用法：/全局默认 <项目> 开|关")
+        lines.append("  如：/全局默认 禁言开关 开")
+        await global_default_cmd.finish("\n".join(lines))
+
+    # 解析参数
+    parts = text.split()
+    if len(parts) < 2:
+        await global_default_cmd.finish(
+            "❌ 用法：/全局默认 <项目> 开|关\n"
+            "如：/全局默认 禁言开关 开\n"
+            "直接发 /全局默认 查看所有默认值"
+        )
+
+    name = parts[0]
+    action = parts[1]
+
+    matched_key = None
+    for label, key in DEFAULT_MAP.items():
+        if name in label or label in name:
+            matched_key = key
+            break
+
+    if not matched_key:
+        available = "、".join(DEFAULT_MAP.keys())
+        await global_default_cmd.finish(
+            f"❌ 未知项目「{name}」\n可用：{available}"
+        )
+
+    if action in ("开", "on", "启用", "打开"):
+        gcfg.set_default(matched_key, True)
+        await global_default_cmd.finish(f"✅ 全局默认「{DEFAULT_LABELS[matched_key]}」→ 开启\n之后新加入的群将默认启用此功能")
+    elif action in ("关", "off", "停用", "关闭"):
+        gcfg.set_default(matched_key, False)
+        await global_default_cmd.finish(f"❌ 全局默认「{DEFAULT_LABELS[matched_key]}」→ 关闭\n之后新加入的群将默认停用此功能")
+    else:
+        defaults = gcfg.get_defaults()
+        current = getattr(defaults, matched_key)
+        state = "✅ 开启" if current else "❌ 关闭"
+        await global_default_cmd.finish(
+            f"「{DEFAULT_LABELS[matched_key]}」全局默认：{state}\n"
+            f"用法：/全局默认 {name} 开|关"
+        )
+
+
+# ============================================================
+# /广播 — 向所有群发送公告（超级用户专用）
+# ============================================================
+
+broadcast_cmd = on_command("广播", aliases={"全群通知"}, priority=5, rule=is_superuser, block=True)
+
+
+@broadcast_cmd.handle()
+async def handle_broadcast(bot: Bot, event: GroupMessageEvent):
+    text = _get_cmd_text(event)
+    if not text:
+        await broadcast_cmd.finish("❌ 用法：/广播 <公告内容>\n如：/广播 系统将于今晚维护，请见谅")
+
+    gcfg = get_group_config()
+    all_groups = gcfg.list_groups()
+
+    if not all_groups:
+        await broadcast_cmd.finish("❌ 没有可广播的群")
+
+    msg = f"📢 **狗三系统公告**\n\n{text}\n\n——来自超级用户"
+
+    success = 0
+    fail = 0
+    for gid in all_groups:
+        try:
+            await bot.send_group_msg(group_id=int(gid), message=msg)
+            success += 1
+        except Exception as e:
+            logger.error(f"[广播] 群{gid}发送失败: {e}")
+            fail += 1
+
+    await broadcast_cmd.finish(
+        f"✅ 广播完成：成功 {success} 个群" + (f"，失败 {fail} 个群" if fail else "")
+    )
 
 
 # ============================================================
@@ -619,7 +896,7 @@ async def handle_brainwash(bot: Bot, event: GroupMessageEvent):
 # /全员警告 文字
 # ============================================================
 
-announce_cmd = on_command("全员警告", aliases={"全员通知", "广播"}, priority=5, rule=is_admin, block=True)
+announce_cmd = on_command("全员警告", aliases={"全员通知"}, priority=5, rule=is_admin, block=True)
 
 
 @announce_cmd.handle()

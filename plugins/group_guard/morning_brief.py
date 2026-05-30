@@ -15,6 +15,8 @@ import httpx
 from nonebot import on_message, get_driver, get_bots, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 
+from .group_config import get_group_config
+
 
 # ============================================================
 # 法定节假日
@@ -245,7 +247,12 @@ async def _morning_brief_loop():
                     logger.warning("[早报] 没有已知的活跃群")
                 else:
                     sent_count = 0
+                    gcfg = get_group_config()
                     for gid in groups:
+                        # 检查功能开关 — 该群是否开启了早安短报
+                        if not gcfg.get(gid).morning_brief_enabled:
+                            logger.info(f"[早报] 群{gid} 已关闭早安短报，跳过")
+                            continue
                         try:
                             await bot.send_group_msg(
                                 group_id=int(gid),

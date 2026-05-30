@@ -17,6 +17,7 @@ from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 from .storage import get_storage
 from .checker import CheckResult
 from .config import plugin_config
+from .group_config import get_group_config
 
 
 @dataclass
@@ -116,9 +117,10 @@ class Punisher:
         # 构建消息
         message = self.build_warn_message(event.user_id, count, check_result)
 
-        # 执行禁言（受禁言开关控制）
+        # 执行禁言（受禁言开关控制 — 按群独立）
         if action == "mute" and mute_seconds > 0:
-            if plugin_config.mute_enabled:
+            mute_enabled = get_group_config().get(str(event.group_id)).mute_enabled
+            if mute_enabled:
                 try:
                     await bot.set_group_ban(
                         group_id=event.group_id,

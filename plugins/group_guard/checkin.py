@@ -46,9 +46,14 @@ class CheckinStorage:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self._data, f, ensure_ascii=False, indent=2)
 
-    def checkin(self, user_id: str) -> tuple[int, int, bool]:
+    def _ensure_group(self, group_id: str):
+        """确保群数据结构存在"""
+        if group_id not in self._data:
+            self._data[group_id] = {}
+
+    def checkin(self, group_id: str, user_id: str) -> tuple[int, int, bool]:
         """
-        执行签到
+        执行签到（按群隔离）
 
         Returns:
             (streak, total, is_first_today)
@@ -56,10 +61,12 @@ class CheckinStorage:
         today = time.strftime("%Y-%m-%d")
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        if user_id not in self._data:
-            self._data[user_id] = {"last_date": "", "streak": 0, "total": 0}
+        self._ensure_group(group_id)
 
-        record = self._data[user_id]
+        if user_id not in self._data[group_id]:
+            self._data[group_id][user_id] = {"last_date": "", "streak": 0, "total": 0}
+
+        record = self._data[group_id][user_id]
 
         # 今天已经签过
         if record["last_date"] == today:
@@ -77,11 +84,12 @@ class CheckinStorage:
 
         return (record["streak"], record["total"], True)
 
-    def get_top_streaks(self, n: int = 10) -> list[tuple[str, int, int]]:
-        """获取连续签到 TOP N: [(user_id, streak, total), ...]"""
+    def get_top_streaks(self, group_id: str, n: int = 10) -> list[tuple[str, int, int]]:
+        """获取某群连续签到 TOP N: [(user_id, streak, total), ...]"""
+        self._ensure_group(group_id)
         items = [
             (uid, r["streak"], r["total"])
-            for uid, r in self._data.items()
+            for uid, r in self._data.get(group_id, {}).items()
         ]
         items.sort(key=lambda x: (x[1], x[2]), reverse=True)
         return items[:n]
@@ -153,8 +161,9 @@ checkin_cmd = on_command("签到", aliases={"打卡", "报到"}, priority=5, blo
 @checkin_cmd.handle()
 async def handle_checkin(bot: Bot, event: GroupMessageEvent):
     user_id = str(event.user_id)
+    group_id = str(event.group_id)
     storage = get_checkin_storage()
-    streak, total, is_first = storage.checkin(user_id)
+    streak, total, is_first = storage.checkin(group_id, user_id)
 
     if not is_first:
         await checkin_cmd.finish(
@@ -191,12 +200,13 @@ async def handle_checkin_rank(bot: Bot, event: GroupMessageEvent):
     if m:
         n = min(int(m.group()), 30)
 
-    top = storage.get_top_streaks(n)
+    group_id = str(event.group_id)
+    top = storage.get_top_streaks(group_id, n)
     if not top:
-        await rank_cmd.finish("咕咕嘎嘎！还没有人签到过。快来做第一个吧！")
+        await rank_cmd.finish("咕咕嘎嘎！本群还没有人签到过。快来做第一个吧！")
 
     medals = ["🥇", "🥈", "🥉"]
-    lines = [f"🐧 签到排行榜 TOP{len(top)}", ""]
+    lines = [f"🐧 本群签到排行榜 TOP{len(top)}", ""]
     for i, (uid, streak, total) in enumerate(top):
         medal = medals[i] if i < 3 else f"{i+1}."
         lines.append(f"  {medal} [CQ:at,qq={uid}] — 连续{streak}天 | 累计{total}次")

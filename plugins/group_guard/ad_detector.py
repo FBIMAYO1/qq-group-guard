@@ -16,6 +16,7 @@ from nonebot import on_message, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 
 from .config import plugin_config
+from .group_config import get_group_config
 from .storage import get_storage
 
 
@@ -85,6 +86,11 @@ async def handle_ad(bot: Bot, event: GroupMessageEvent):
     """检测广告/链接"""
     gid = str(event.group_id)
     uid = str(event.user_id)
+
+    # 检查功能开关
+    gcfg = get_group_config()
+    if not gcfg.get(gid).ad_enabled:
+        return
 
     # 跳过管理员和群主
     if event.sender.role in ("admin", "owner"):

@@ -67,9 +67,9 @@ def _draw_fortune() -> tuple[str, str]:
 
 
 # ============================================================
-# 每日追踪 — 每人每天一次（内存存储，重启重置）
+# 每日追踪 — 每人每群每天一次（内存存储，重启重置）
 # ============================================================
-_daily_fortunes: dict[str, str] = {}  # user_id -> "YYYY-MM-DD"
+_daily_fortunes: dict[str, dict[str, str]] = {}  # group_id -> {user_id -> "YYYY-MM-DD"}
 
 
 # ============================================================
@@ -81,25 +81,30 @@ fortune_cmd = on_command("抽签", aliases={"运势", "今日运势"}, priority=
 @fortune_cmd.handle()
 async def handle_fortune(bot: Bot, event: GroupMessageEvent):
     user_id = str(event.user_id)
+    group_id = str(event.group_id)
     today = time.strftime("%Y-%m-%d")
 
+    # 确保群字典存在
+    if group_id not in _daily_fortunes:
+        _daily_fortunes[group_id] = {}
+
     # 清理过期记录
-    if user_id in _daily_fortunes and _daily_fortunes[user_id] != today:
-        del _daily_fortunes[user_id]
+    if user_id in _daily_fortunes[group_id] and _daily_fortunes[group_id][user_id] != today:
+        del _daily_fortunes[group_id][user_id]
 
     # 今天已经抽过
-    if user_id in _daily_fortunes:
+    if user_id in _daily_fortunes[group_id]:
         await fortune_cmd.finish(
-            f"[CQ:at,qq={user_id}] 咕咕嘎嘎！你今天已经抽过签了。\n"
+            f"[CQ:at,qq={user_id}] 咕咕嘎嘎！你今天在本群已经抽过签了。\n"
             f"明天再来吧，企鹅一天只算一次命。"
         )
 
     # 抽取运势
     level, description = _draw_fortune()
-    _daily_fortunes[user_id] = today
+    _daily_fortunes[group_id][user_id] = today
 
     await fortune_cmd.finish(
         f"[CQ:at,qq={user_id}] 🔮 {level}\n\n{description}"
     )
 
-    logger.info(f"[运势] 群:{event.group_id} 用户:{user_id} → {level}")
+    logger.info(f"[运势] 群:{group_id} 用户:{user_id} → {level}")
