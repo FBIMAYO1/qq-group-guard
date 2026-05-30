@@ -4,6 +4,7 @@
 命令列表：
   /帮助            - 查看所有命令
   /查询 @某人      - 查看某人违规记录
+  /历史 @某人      - 查看某人违规发言全文
   /刷新 @某人 [N]  - 重置违规次数（默认0），可指定到几
   /添加违规 @某人 [N] - 手动添加违规次数（默认1次）
   /撤销 @某人      - 撤销最近一条违规
@@ -99,6 +100,7 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "━━━━━━━━━━━━━━━━━━\n"
         "📊 记录查询\n"
         "  /查询 @某人 — 查看违规记录\n"
+        "  /历史 @某人 — 违规发言全文\n"
         "  /排行榜 [N] — 违规排行榜\n"
         "  /群管状态 — 运行状态\n\n"
         "🛠 记录管理\n"
@@ -167,6 +169,51 @@ async def handle_query(bot: Bot, event: GroupMessageEvent):
         lines.append(f"  {i}. {r['time']} | {r['category']}")
 
     await query_cmd.finish("\n".join(lines))
+
+
+# ============================================================
+# /历史 @某人 — 查看某人的全部违规发言记录
+# ============================================================
+
+history_cmd = on_command("历史", aliases={"发言记录", "违规发言", "历史记录"}, priority=5, rule=is_admin, block=True)
+
+
+@history_cmd.handle()
+async def handle_history(bot: Bot, event: GroupMessageEvent):
+    target_id = _extract_at_target(event)
+    if not target_id:
+        await history_cmd.finish("❌ 用法：/历史 @某人")
+        return
+
+    storage = get_storage()
+    group_id = str(event.group_id)
+    user_id = str(target_id)
+
+    count = storage.get_violation_count(group_id, user_id)
+    records = storage.get_user_records(group_id, user_id)
+
+    if not records:
+        await history_cmd.finish(f"[CQ:at,qq={target_id}] 暂无违规发言记录 ✅")
+        return
+
+    lines = [
+        f"📜 [CQ:at,qq={target_id}] 违规发言记录",
+        f"今日累计：{count} 次 | 历史总计：{len(records)} 条",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
+
+    # 倒序显示，最新的在前面
+    for i, r in enumerate(reversed(records), 1):
+        text = r.get("text", "").strip()
+        if text:
+            # 截断过长的发言
+            display_text = text[:40] + "..." if len(text) > 40 else text
+            lines.append(f"{i}. {r['time'][:16]} | {r['category']}")
+            lines.append(f"   💬 {display_text}")
+        else:
+            lines.append(f"{i}. {r['time'][:16]} | {r['category']}")
+
+    await history_cmd.finish("\n".join(lines))
 
 
 # ============================================================

@@ -103,6 +103,7 @@ class Punisher:
             category=check_result.category_name or "未知",
             matched=check_result.matched_word or "",
             action="",  # 先占位，后面更新
+            text=check_result.original_text or "",
         )
 
         # 计算处罚

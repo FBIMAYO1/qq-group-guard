@@ -107,6 +107,7 @@ class ViolationStorage:
         category: str,
         matched: str,
         action: str,
+        text: str = "",
     ) -> int:
         """记录一次违规，返回当前今日累计次数"""
         self._check_daily_reset()
@@ -120,6 +121,7 @@ class ViolationStorage:
             "category": category,
             "matched": matched,
             "action": action,
+            "text": text,
         })
         self._save()
         return user_data["count"]
