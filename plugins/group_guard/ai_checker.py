@@ -424,16 +424,7 @@ class DeepSeekChecker:
 
     def _parse_response(self, raw: str) -> dict | None:
         """解析 AI 返回的 JSON"""
-        # 清理可能的 markdown 代码块标记
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)
-            if len(cleaned) > 1:
-                cleaned = "\n".join(cleaned[1:])
-            else:
-                cleaned = cleaned[0]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3].strip()
+        cleaned = _extract_json_from_raw(raw)
 
         try:
             return json.loads(cleaned)
@@ -452,8 +443,31 @@ class DeepSeekChecker:
         return None
 
 
+def _extract_json_from_raw(raw: str) -> str:
+    """去掉 AI 响应中的 markdown 代码围栏，返回纯 JSON 字符串"""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        parts = cleaned.split("\n", 1)
+        if len(parts) > 1:
+            cleaned = "\n".join(parts[1:])
+        else:
+            cleaned = cleaned[0]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].strip()
+    return cleaned
+
+
+def get_openai_client() -> OpenAI | None:
+    """获取共享的 OpenAI 客户端单例"""
+    global _openai_client
+    if _openai_client is None and API_KEY:
+        _openai_client = OpenAI(api_key=API_KEY, base_url=DEEPSEEK_BASE_URL)
+    return _openai_client
+
+
 # 全局单例
 _checker: DeepSeekChecker | None = None
+_openai_client: OpenAI | None = None
 
 
 def get_ai_checker() -> DeepSeekChecker:

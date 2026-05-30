@@ -109,6 +109,9 @@ class Punisher:
         # 计算处罚
         action, mute_seconds = self.calculate_punishment(count)
 
+        # 更新记录中的 action 字段
+        self.storage.update_last_record_action(group_id, user_id, action)
+
         # 构建消息
         message = self.build_warn_message(event.user_id, count, check_result)
 

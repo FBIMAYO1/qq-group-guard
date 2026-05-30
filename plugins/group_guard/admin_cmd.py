@@ -32,10 +32,7 @@ from nonebot.adapters.onebot.v11 import (
 )
 
 from .storage import get_storage
-from .config import GroupGuardConfig
-
-# 加载配置
-plugin_config = GroupGuardConfig()
+from .config import plugin_config
 
 
 # ============================================================
@@ -140,7 +137,6 @@ async def handle_query(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await query_cmd.finish("❌ 用法：/查询 @某人")
-        return
 
     storage = get_storage()
     group_id = str(event.group_id)
@@ -153,7 +149,6 @@ async def handle_query(bot: Bot, event: GroupMessageEvent):
     if count == 0:
         wl_tag = " 🛡白名单" if is_wl else ""
         await query_cmd.finish(f"[CQ:at,qq={target_id}] 暂无违规记录 ✅{wl_tag}")
-        return
 
     recent = records[-5:]
     if count < 3:
@@ -186,7 +181,6 @@ async def handle_history(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await history_cmd.finish("❌ 用法：/历史 @某人")
-        return
 
     storage = get_storage()
     group_id = str(event.group_id)
@@ -197,7 +191,6 @@ async def handle_history(bot: Bot, event: GroupMessageEvent):
 
     if not records:
         await history_cmd.finish(f"[CQ:at,qq={target_id}] 暂无违规发言记录 ✅")
-        return
 
     lines = [
         f"📜 [CQ:at,qq={target_id}] 违规发言记录",
@@ -231,12 +224,12 @@ async def handle_refresh(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await refresh_cmd.finish("❌ 用法：/刷新 @某人 [次数]\n默认归零，可指定次数如 /刷新 @某人 2")
-        return
 
     target_count = _extract_number(_get_cmd_text(event)) or 0
 
     storage = get_storage()
     storage.set_violation_count(str(event.group_id), str(target_id), target_count)
+    logger.info(f"[管理] /刷新 群:{event.group_id} 操作者:{event.user_id} 目标:{target_id} → {target_count}")
     await refresh_cmd.finish(
         f"✅ 已将 [CQ:at,qq={target_id}] 的违规次数设为 {target_count}"
     )
@@ -254,7 +247,6 @@ async def handle_add_violation(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await add_vio_cmd.finish("❌ 用法：/添加违规 @某人 [次数]\n如 /添加违规 @某人 2")
-        return
 
     add_count = _extract_number(_get_cmd_text(event)) or 1
 
@@ -262,6 +254,7 @@ async def handle_add_violation(bot: Bot, event: GroupMessageEvent):
     new_count = storage.add_manual_violation(
         str(event.group_id), str(target_id), add_count
     )
+    logger.info(f"[管理] /添加违规 群:{event.group_id} 操作者:{event.user_id} 目标:{target_id} +{add_count} → {new_count}")
     await add_vio_cmd.finish(
         f"✅ 已为 [CQ:at,qq={target_id}] 添加 {add_count} 次违规，当前累计 {new_count} 次"
     )
@@ -279,13 +272,13 @@ async def handle_undo(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await undo_cmd.finish("❌ 用法：/撤销 @某人")
-        return
 
     storage = get_storage()
     success = storage.remove_last_violation(str(event.group_id), str(target_id))
 
     if success:
         new_count = storage.get_violation_count(str(event.group_id), str(target_id))
+        logger.info(f"[管理] /撤销 群:{event.group_id} 操作者:{event.user_id} 目标:{target_id} → {new_count}")
         await undo_cmd.finish(
             f"✅ 已撤销 [CQ:at,qq={target_id}] 最近一条违规，当前累计 {new_count} 次"
         )
@@ -305,11 +298,11 @@ async def handle_mute(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await mute_cmd.finish("❌ 用法：/禁言 @某人 分钟数\n如 /禁言 @某人 30")
-        return
 
     duration_min = _extract_number(_get_cmd_text(event)) or 10
     duration_sec = duration_min * 60
 
+    logger.info(f"[管理] /禁言 群:{event.group_id} 操作者:{event.user_id} 目标:{target_id} {duration_min}分钟")
     try:
         await bot.set_group_ban(
             group_id=event.group_id,
@@ -339,7 +332,6 @@ async def handle_unmute(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await unmute_cmd.finish("❌ 用法：/解禁 @某人")
-        return
 
     try:
         await bot.set_group_ban(
@@ -366,11 +358,11 @@ async def handle_kick(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await kick_cmd.finish("❌ 用法：/踢出 @某人")
-        return
 
     # 提取附言（去除 at 号和数字后的文字）
     text = _get_cmd_text(event)
     reason = re.sub(r'\d+', '', text).strip() or "违反群规"
+    logger.info(f"[管理] /踢出 群:{event.group_id} 操作者:{event.user_id} 目标:{target_id} 理由:{reason}")
 
     try:
         await bot.set_group_kick(
@@ -406,13 +398,11 @@ async def handle_recall(bot: Bot, event: GroupMessageEvent):
             await recall_cmd.finish(f"❌ 撤回失败：{e}")
             return
         await recall_cmd.finish("✅ 已撤回该消息")
-        return
 
     # 检查是否 @了某人 — 没@也没回复就是用法错误
     target_id = _extract_at_target(event)
     if not target_id:
         await recall_cmd.finish("❌ 请回复要撤回的消息后发送 /撤回\n或使用 /撤回 @某人")
-        return
 
     await recall_cmd.finish(f"💡 提示：请直接回复对方的消息，然后发送 /撤回")
 
@@ -439,10 +429,10 @@ async def handle_whitelist(bot: Bot, event: GroupMessageEvent):
         for uid in wl:
             lines.append(f"  • {uid}")
         await wl_add_cmd.finish("\n".join(lines))
-        return
 
     # @了人 → 加入白名单
     storage.add_to_whitelist(group_id, str(target_id))
+    logger.info(f"[管理] /白名单 添加 群:{event.group_id} 操作者:{event.user_id} 目标:{target_id}")
     await wl_add_cmd.finish(
         f"🛡 已将 [CQ:at,qq={target_id}] 加入白名单\n该用户不再受AI检测"
     )
@@ -460,12 +450,12 @@ async def handle_whitelist_remove(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await wl_remove_cmd.finish("❌ 用法：/取消白名单 @某人")
-        return
 
     storage = get_storage()
     success = storage.remove_from_whitelist(str(event.group_id), str(target_id))
 
     if success:
+        logger.info(f"[管理] /取消白名单 群:{event.group_id} 操作者:{event.user_id} 目标:{target_id}")
         await wl_remove_cmd.finish(f"✅ 已将 [CQ:at,qq={target_id}] 移出白名单，恢复AI检测")
     else:
         await wl_remove_cmd.finish("该用户不在白名单中")
@@ -487,7 +477,6 @@ async def handle_leaderboard(bot: Bot, event: GroupMessageEvent):
 
     if not lb:
         await leaderboard_cmd.finish("🏆 本群暂无违规记录，大家都很棒！")
-        return
 
     lines = ["🏆 违规排行榜", "━━━━━━━━━━━━━━"]
     medals = ["🥇", "🥈", "🥉"]
@@ -511,9 +500,11 @@ async def handle_toggle(bot: Bot, event: GroupMessageEvent):
 
     if text in ("开", "on", "启用", "打开"):
         plugin_config.guard_enabled = True
+        logger.info(f"[管理] /群管开关 开 群:{event.group_id} 操作者:{event.user_id}")
         await toggle_cmd.finish("✅ 群管机器人已**启用**，将自动检测违规消息")
     elif text in ("关", "off", "停用", "关闭"):
         plugin_config.guard_enabled = False
+        logger.info(f"[管理] /群管开关 关 群:{event.group_id} 操作者:{event.user_id}")
         await toggle_cmd.finish("⏸️ 群管机器人已**停用**，将不再自动检测")
     else:
         plugin_config.guard_enabled = not plugin_config.guard_enabled
@@ -564,15 +555,20 @@ async def handle_brainwash(bot: Bot, event: GroupMessageEvent):
     target_id = _extract_at_target(event)
     if not target_id:
         await brainwash_cmd.finish("❌ 用法：/洗脑 @某人")
-        return
 
     from . import brainwash
 
+    result = ""
     try:
         result = await brainwash.brainwash_target(bot, event.group_id, target_id)
-        await brainwash_cmd.finish(result)
     except Exception as e:
         await brainwash_cmd.finish(f"❌ 洗脑失败：{e}")
+        return
+
+    if result:
+        await brainwash_cmd.finish(result)
+    else:
+        await brainwash_cmd.finish()
 
 
 # ============================================================
@@ -587,7 +583,6 @@ async def handle_announce(bot: Bot, event: GroupMessageEvent):
     text = _get_cmd_text(event)
     if not text:
         await announce_cmd.finish("❌ 用法：/全员警告 警告内容")
-        return
 
     msg = f"📢 **群管理通知**\n[CQ:at,qq=all]\n\n{text}"
     await bot.send_group_msg(group_id=event.group_id, message=msg)

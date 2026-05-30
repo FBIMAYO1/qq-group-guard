@@ -19,27 +19,10 @@
 import json
 import time
 from pathlib import Path
-from dataclasses import dataclass, field
 
 
 DATA_DIR = Path(__file__).parent / "data"
 DATA_FILE = DATA_DIR / "violations.json"
-
-
-@dataclass
-class ViolationRecord:
-    """单条违规记录"""
-    time: str
-    category: str
-    matched: str
-    action: str
-
-
-@dataclass
-class UserViolation:
-    """用户违规信息"""
-    count: int = 0
-    records: list[dict] = field(default_factory=list)
 
 
 class ViolationStorage:
@@ -184,6 +167,16 @@ class ViolationStorage:
             return False
         except KeyError:
             return False
+
+    def update_last_record_action(self, group_id: str, user_id: str, action: str):
+        """更新最近一条违规记录的 action 字段（warn/mute）"""
+        try:
+            records = self._data[group_id][user_id]["records"]
+            if records:
+                records[-1]["action"] = action
+                self._save()
+        except KeyError:
+            pass
 
     def get_violation_count(self, group_id: str, user_id: str) -> int:
         """获取用户在某群的违规次数（今日）"""

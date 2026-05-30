@@ -12,7 +12,7 @@ from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 from nonebot.rule import Rule
 from openai import OpenAI
 
-from .ai_checker import API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from .ai_checker import API_KEY, DEEPSEEK_MODEL, get_openai_client
 
 
 # ============================================================
@@ -128,7 +128,9 @@ async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
         return
 
     try:
-        client = OpenAI(api_key=API_KEY, base_url=DEEPSEEK_BASE_URL)
+        client = get_openai_client()
+        if not client:
+            return
         response = client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[

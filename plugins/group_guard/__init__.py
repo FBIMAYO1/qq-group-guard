@@ -16,10 +16,9 @@ from .checker import CheckResult
 from .punisher import get_punisher
 from .ai_checker import get_ai_checker
 from .storage import get_storage
-from .config import GroupGuardConfig
+from .config import plugin_config
 
-# 加载配置
-plugin_config = GroupGuardConfig()
+# 加载配置（config.py 中的全局单例）
 
 # 导入管理命令（注册 /帮助 /查询 等命令）
 from . import admin_cmd  # noqa: F401, E402

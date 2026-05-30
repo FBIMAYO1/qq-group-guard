@@ -2,13 +2,15 @@
 插件配置
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class GroupGuardConfig(BaseModel):
-    """群管插件配置"""
+    """群管插件配置 — 全局单例，通过 plugin_config 引用"""
 
-    # 是否启用（可以通过配置临时关闭）
+    model_config = ConfigDict(frozen=False)
+
+    # 是否启用（可以通过 /群管开关 临时关闭）
     guard_enabled: bool = True
 
     # 白名单用户（不受规则约束的QQ号）
@@ -22,3 +24,7 @@ class GroupGuardConfig(BaseModel):
 
     # 是否在私聊通知被处罚用户
     notify_private: bool = False
+
+
+# 全局单例 — __init__.py 和 admin_cmd.py 共享此实例
+plugin_config = GroupGuardConfig()

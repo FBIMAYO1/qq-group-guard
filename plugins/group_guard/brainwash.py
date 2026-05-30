@@ -93,6 +93,8 @@ def _format_time(minutes: int) -> str:
 
 # ============================================================
 # 低优先级消息收集器 — 记录所有非管理员的活跃成员 + 发言时间
+# 注意：与 morning_brief.py 的 group_collector (priority=99) 同时运行，
+# 两者独立收集，可考虑未来合并为一个统一的元数据收集器
 # ============================================================
 member_collector = on_message(priority=99, block=False)
 
@@ -128,7 +130,7 @@ async def _is_brainwash_target(event: GroupMessageEvent) -> bool:
     gid = str(event.group_id)
     uid = str(event.user_id)
     if gid in _current_target:
-        target_uid, _ = _current_target[gid]
+        target_uid, _, _ = _current_target[gid]
         if uid == target_uid:
             return True
     return False
@@ -150,7 +152,10 @@ async def _handle_brainwash_reply(bot: Bot, event: GroupMessageEvent):
 
     target_uid, started_at, round_num = _current_target.get(gid, ("", 0, 0))
 
-    if "凑企鹅" in text:
+    # 归一化：兼容简体"凑"和繁体"湊"
+    normalized = text.replace("湊", "凑")
+
+    if "凑企鹅" in normalized:
         # 承认了 → 结束
         reply = f"[CQ:at,qq={uid}] 咕咕嘎嘎！"
         await bot.send_group_msg(group_id=event.group_id, message=reply)
