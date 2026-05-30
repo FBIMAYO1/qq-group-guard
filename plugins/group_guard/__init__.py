@@ -27,6 +27,9 @@ from . import admin_cmd  # noqa: F401, E402
 # 导入企鹅角色扮演（注册 @机器人 趣味聊天）
 from . import penguin_chat  # noqa: F401, E402
 
+# 导入洗脑模块（注册定时洗脑任务）
+from . import brainwash  # noqa: F401, E402
+
 
 # ============================================================
 # 规则：只处理群消息，且发送者不在白名单中
