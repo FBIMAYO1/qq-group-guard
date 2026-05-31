@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from .ai_checker import API_KEY, DEEPSEEK_MODEL, get_openai_client
 from .group_config import get_group_config
+from .image_checker import call_vision
 
 
 # ============================================================
@@ -117,6 +118,152 @@ penguin_chat = on_message(
 )
 
 
+# ============================================================
+# 辅助函数：图片描述
+# ============================================================
+
+async def _extract_image_from_reply_or_message(
+    bot: Bot, event: GroupMessageEvent
+) -> tuple[str | None, str]:
+    """
+    从回复引用或当前消息中提取图片 URL。
+
+    优先级：
+    1. event.reply → bot.get_msg() → 查原消息是否有图
+    2. event.message 中的 reply 段 → bot.get_msg() → 同上
+    3. event.message 中的 image 段
+
+    Returns:
+        (image_url, user_text) — image_url 为 None 表示没有图片
+    """
+    image_url: str | None = None
+
+    # Case 1: QQ 内置回复 — event.reply
+    message_id = None
+    if getattr(event, "reply", None):
+        message_id = event.reply.message_id
+
+    # Case 2: 引用消息段 — CQ:reply
+    if not message_id:
+        for seg in event.message:
+            if seg.type == "reply":
+                try:
+                    message_id = int(seg.data.get("id", 0))
+                except (ValueError, TypeError):
+                    pass
+                break
+
+    if message_id:
+        try:
+            original = await bot.get_msg(message_id=message_id)
+            # get_msg 返回 dict: {"message_id": ..., "message": [seg_dict, ...]}
+            if isinstance(original, dict):
+                for seg in original.get("message", []):
+                    if seg.get("type") == "image":
+                        image_url = seg.get("data", {}).get("url", "")
+                        if image_url:
+                            logger.info(
+                                f"[企鹅] 从引用消息 {message_id} 提取到图片"
+                            )
+                            break
+            else:
+                logger.warning(f"[企鹅] get_msg 返回意外类型: {type(original)}")
+        except Exception as e:
+            logger.warning(f"[企鹅] get_msg 失败: {e} | message_id={message_id}")
+            # 不阻断，继续检查当前消息
+
+    # Case 3: 当前消息里的图片（兜底）
+    if not image_url:
+        for seg in event.message:
+            if seg.type == "image":
+                image_url = seg.data.get("url", "")
+                if image_url:
+                    break
+
+    user_text = ""
+    if image_url:
+        user_text = event.get_plaintext().strip()
+
+    return image_url, user_text
+
+
+async def _handle_image_description(
+    bot: Bot,
+    event: GroupMessageEvent,
+    image_url: str,
+    user_text: str,
+):
+    """
+    图片描述管线：vision.js 识图 → DeepSeek 企鹅润色 → 发送回复
+    """
+    # ---- Step 1: 调 vision API 获取原始描述 ----
+    vision_prompt = "请详细描述这张图片的内容。"
+    if user_text:
+        vision_prompt = f"请描述这张图片，并回答这个问题：{user_text}"
+
+    logger.info(
+        f"[企鹅] 开始识图 | 群:{event.group_id} 用户:{event.user_id} | "
+        f"prompt:{vision_prompt[:50]}"
+    )
+
+    raw = await call_vision(image_url, vision_prompt)
+    if not raw:
+        await bot.send_group_msg(
+            group_id=event.group_id,
+            message="咕咕嘎嘎! 眼睛花了，看不清。",
+        )
+        return
+
+    logger.info(f"[企鹅] 识图完成 | 描述前100字:{raw[:100]}")
+
+    # ---- Step 2: DeepSeek 企鹅润色 ----
+    if not API_KEY:
+        await bot.send_group_msg(
+            group_id=event.group_id,
+            message="咕咕嘎嘎! 企鹅脑子冻住了，等会儿。",
+        )
+        return
+
+    try:
+        client = get_openai_client()
+        if not client:
+            return
+
+        restyle_prompt = (
+            f"有人给你看了一张图片。图片的AI描述是：\n\n{raw}\n\n"
+            f"请用你的企鹅风格（冰冷、简短、穿插咕咕嘎嘎叫声）向这个人描述这张图片的内容。"
+            f"回复1-2句话即可。"
+        )
+
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": PENGUIN_SYSTEM_PROMPT},
+                {"role": "user", "content": restyle_prompt},
+            ],
+            max_tokens=200,
+            temperature=0.7,
+        )
+
+        reply = response.choices[0].message.content.strip()
+        if not reply:
+            reply = "咕咕嘎嘎!"
+
+        await bot.send_group_msg(group_id=event.group_id, message=reply)
+
+        logger.info(
+            f"[企鹅] 图片回复成功 | 群:{event.group_id} 用户:{event.user_id} | "
+            f"企鹅:{reply[:40]}"
+        )
+
+    except Exception as e:
+        logger.error(f"[企鹅] 图片AI调用失败: {e}")
+        await bot.send_group_msg(
+            group_id=event.group_id,
+            message="咕咕嘎嘎! 冻僵了...说不了话。",
+        )
+
+
 @penguin_chat.handle()
 async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
     """处理@机器人的消息 — 凑企鹅附体"""
@@ -152,6 +299,12 @@ async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
 
     # 记录使用时间
     _rate_limit[key] = now
+
+    # ---- 图片描述：引用图 / 直接发图 → 识图 + 企鹅润色 ----
+    image_url, user_text = await _extract_image_from_reply_or_message(bot, event)
+    if image_url:
+        await _handle_image_description(bot, event, image_url, user_text)
+        return
 
     # ---- 提取消息文本 ----
     text = event.get_plaintext().strip()

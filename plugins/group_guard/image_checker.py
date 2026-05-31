@@ -237,6 +237,99 @@ def _guess_ext(head16: bytes) -> str | None:
     return None
 
 
+async def call_vision(image_url: str, prompt: str, timeout: float = 30.0) -> str | None:
+    """
+    下载图片 → 调 vision.js → 返回文本描述。
+
+    通用图片理解管线，供审核以外的场景（如企鹅识图）复用。
+    共享全局 _MIN_INTERVAL 限流，不走 _cache。
+
+    Args:
+        image_url:  图片 URL（QQ CDN 等）
+        prompt:     给 VL 模型的指令
+        timeout:    vision.js 子进程超时秒数
+
+    Returns:
+        vl 返回的纯文本；下载/调用失败返回 None
+    """
+    # ---- 限流（与 check_images 共享 API Key） ----
+    global _last_call
+    now = time.time()
+    wait = _MIN_INTERVAL - (now - _last_call)
+    if wait > 0:
+        await asyncio.sleep(wait)
+    _last_call = time.time()
+
+    # ---- 下载图片 ----
+    logger.info(f"[call_vision] 下载图片 | URL:{image_url[:60]}...")
+    tmp_path = None
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0),
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(image_url)
+            resp.raise_for_status()
+            image_bytes = resp.content
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"[call_vision] 下载失败 HTTP{e.response.status_code}")
+        return None
+    except Exception as e:
+        logger.warning(f"[call_vision] 下载异常: {e}")
+        return None
+
+    if not image_bytes or len(image_bytes) < 100:
+        logger.warning(f"[call_vision] 图片太小({len(image_bytes)}字节)")
+        return None
+
+    # ---- 写临时文件 ----
+    try:
+        suffix = _guess_ext(image_bytes[:16]) or ".jpg"
+        tmp_path = _TMP_DIR / f"{hashlib.md5(image_bytes).hexdigest()[:16]}{suffix}"
+        tmp_path.write_bytes(image_bytes)
+    except Exception as e:
+        logger.error(f"[call_vision] 写临时文件失败: {e}")
+        return None
+
+    # ---- 调 vision.js ----
+    logger.info(f"[call_vision] vision.js | 文件:{tmp_path.name} 大小:{len(image_bytes)}B")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "node", _VISION_JS,
+            str(tmp_path),
+            prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[call_vision] 超时 | 文件:{tmp_path.name}")
+        return None
+    except FileNotFoundError:
+        logger.error(f"[call_vision] vision.js 不存在: {_VISION_JS}")
+        return None
+    except Exception as e:
+        logger.error(f"[call_vision] 进程启动失败: {e}")
+        return None
+    finally:
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+
+    if proc.returncode != 0:
+        err_text = stderr.decode("utf-8", errors="replace")[:200] if stderr else ""
+        logger.warning(f"[call_vision] vision.js 返回 {proc.returncode} | {err_text}")
+        return None
+
+    output = stdout.decode("utf-8", errors="replace").strip()
+    logger.info(f"[call_vision] 完成 | 输出前100字: {output[:100]}")
+    return output
+
+
 def _parse_moderation_output(
     output: str, url: str, event: GroupMessageEvent
 ) -> CheckResult | None:
