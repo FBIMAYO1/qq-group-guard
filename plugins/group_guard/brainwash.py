@@ -20,7 +20,6 @@ import asyncio
 from datetime import datetime
 from nonebot import on_message, get_driver, get_bots, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
-from nonebot.rule import Rule
 
 from .group_config import get_group_config
 
@@ -125,45 +124,58 @@ async def _collect_active(event: GroupMessageEvent):
 
 
 # ============================================================
-# 洗脑回复检测器 — 最高优先级，检测被@的人是否回复
+# 洗脑回复处理函数 — 由 penguin_chat 的 priority=0 handler 调用
+# （不单独注册 matcher，避免与 penguin_chat 同 priority=0 竞争）
 # ============================================================
-async def _is_brainwash_target(event: GroupMessageEvent) -> bool:
-    """检查发消息的人是否正在被洗脑，且消息中@了机器人"""
+async def handle_brainwash_reply(bot: Bot, event: GroupMessageEvent) -> bool:
+    """如果发消息的人正在被洗脑且@了机器人，处理洗脑回复。
+
+    由 penguin_chat.handler 在企鹅聊天逻辑之前调用。
+    这样确保只有一个 priority=0 matcher，消除竞争条件。
+
+    Returns:
+        True  — 已处理洗脑回复（penguin_chat 应直接返回，不继续）
+        False — 此人不在洗脑中，正常走企鹅聊天逻辑
+    """
     gid = str(event.group_id)
     uid = str(event.user_id)
+
+    # 检查是否在洗脑中
     if gid not in _current_target:
+        logger.debug(f"[洗脑] handle_reply: gid={gid} 不在洗脑状态中")
         return False
-
-    target_uid, _, _ = _current_target[gid]
+    target_uid, started_at, round_num = _current_target[gid]
     if uid != target_uid:
+        logger.debug(f"[洗脑] handle_reply: uid={uid} ≠ target={target_uid}")
         return False
 
-    # 必须 @了机器人 才算有效回复
+    logger.info(f"[洗脑] 🎯 洗脑目标 {uid} 的消息进入处理 | 第{round_num}轮 | to_me={getattr(event, 'to_me', 'N/A')!r}")
+
+    # 判断是否 @了机器人（兼容三种情况）
+    # 1. NoneBot 内建的 to_me（最可靠，覆盖@和回复消息）
+    # 2. 显式 at 消息段（兜底）
+    # 3. QQ 回复消息（消息回复机器人也算@）
     bot_qq = str(event.self_id)
-    for seg in event.message:
-        if seg.type == "at" and str(seg.data.get("qq", "")) == bot_qq:
-            return True
-    return False
+    has_at = getattr(event, "to_me", False)
 
+    if not has_at:
+        for seg in event.message:
+            if seg.type == "at" and str(seg.data.get("qq", "")) == bot_qq:
+                has_at = True
+                logger.debug(f"[洗脑] handle_reply: 检测到显式at段 qq={seg.data.get('qq')!r}")
+                break
 
-brainwash_reply = on_message(
-    rule=Rule(_is_brainwash_target),
-    priority=0,     # 最高优先级
-    block=True,     # 阻止企鹅聊天和违规检测
-)
+    if not has_at:
+        logger.info(f"[洗脑] handle_reply: 未@机器人，跳过 | seg_types={[s.type for s in event.message]}")
+        return False
 
-
-@brainwash_reply.handle()
-async def _handle_brainwash_reply(bot: Bot, event: GroupMessageEvent):
-    """被洗脑对象发了消息 → 判断是否包含「凑企鹅」"""
-    gid = str(event.group_id)
-    uid = str(event.user_id)
+    # ---- 处理洗脑回复 ----
     text = event.get_plaintext().strip()
-
-    target_uid, started_at, round_num = _current_target.get(gid, ("", 0, 0))
 
     # 归一化：兼容简体"凑"和繁体"湊"
     normalized = text.replace("湊", "凑")
+
+    logger.info(f"[洗脑] handle_reply: text={text!r} | '凑企鹅' in text={'凑企鹅' in normalized}")
 
     if "凑企鹅" in normalized:
         # 承认了 → 结束
@@ -172,7 +184,7 @@ async def _handle_brainwash_reply(bot: Bot, event: GroupMessageEvent):
         _current_target.pop(gid, None)
         _recently_picked.add((gid, uid))
         logger.info(f"[洗脑] ✅ {uid} 承认是凑企鹅 → 咕咕嘎嘎！（第{round_num}轮）")
-        return
+        return True
 
     # 没承认
     next_round = round_num + 1
@@ -185,7 +197,7 @@ async def _handle_brainwash_reply(bot: Bot, event: GroupMessageEvent):
         _current_target.pop(gid, None)
         _recently_picked.add((gid, uid))
         logger.info(f"[洗脑] 😔 {uid} {MAX_ROUNDS}轮都没承认凑企鹅，放弃")
-        return
+        return True
 
     # 还没到上限 → 继续追问
     _current_target[gid] = (target_uid, time.time(), next_round)
@@ -194,6 +206,7 @@ async def _handle_brainwash_reply(bot: Bot, event: GroupMessageEvent):
         message=f"[CQ:at,qq={uid}] 不对，{BRAINWASH_MSG}",
     )
     logger.info(f"[洗脑] 🔄 {uid} 第{round_num}轮否认 → 继续追问（第{next_round}轮）")
+    return True
 
 
 # ============================================================
@@ -327,6 +340,18 @@ async def _start_brainwash():
     """NoneBot 启动后拉起洗脑定时任务"""
     asyncio.create_task(_brainwash_loop())
     logger.info("[洗脑] 🐧 凑企鹅洗脑模块已启动，每天随机3个时段触发")
+
+
+# ============================================================
+# 公开接口 — 供其他模块查询洗脑状态
+# ============================================================
+
+def is_being_brainwashed(group_id: str, user_id: str) -> bool:
+    """检查指定用户是否正在本群被洗脑"""
+    if group_id not in _current_target:
+        return False
+    target_uid, _, _ = _current_target[group_id]
+    return target_uid == user_id
 
 
 # ============================================================

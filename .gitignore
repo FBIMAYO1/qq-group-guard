@@ -24,5 +24,11 @@ Thumbs.db
 # NapCat（协议层，不需要上传）
 NapCat/
 
+# NapCat QQ 登录会话（含 token，不能上传）
+napcat-data/qq/
+
+# Docker 运行时数据卷
+data/
+
 # NoneBot
 node_modules/

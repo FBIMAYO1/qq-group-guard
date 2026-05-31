@@ -20,6 +20,7 @@
   /群管状态        - 查看运行状态
   /洗脑 @某人     - 手动对某人发起凑企鹅洗脑
   /全员警告 文字   - @全体并发送警告通知
+  /企鹅冷却 [秒]   - 查看/修改企鹅聊天间隔（🔑超级用户）
 """
 
 import re
@@ -141,6 +142,10 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "  /群列表 — 查看所有群状态（🔑超级用户）\n"
         "  /全局默认 — 管理新群默认配置（🔑超级用户）\n"
         "  /广播 — 向所有群发公告（🔑超级用户）\n\n"
+        "📰 早报\n"
+        "  /早报 — 手动获取当天早报 + 新闻\n\n"
+        "🐧 企鹅聊天\n"
+        "  /企鹅冷却 [秒] — 查看/修改@机器人回答间隔（🔑超级用户）\n\n"
         "🛡 自动防护（无需操作）\n"
         "  AI违规检测 | 情绪安慰 | 广告拦截\n"
         "  刷屏检测 | 入群欢迎 | 早安短报\n"
@@ -829,6 +834,21 @@ async def handle_global_default(bot: Bot, event: GroupMessageEvent):
 
 
 # ============================================================
+# /早报 — 手动获取当天早报（管理员可用）
+# ============================================================
+
+brief_cmd = on_command("早报", aliases={"早间新闻", "今日新闻"}, priority=5, rule=is_admin, block=True)
+
+
+@brief_cmd.handle()
+async def handle_brief(bot: Bot, event: GroupMessageEvent):
+    """手动触发早报"""
+    from . import morning_brief
+    brief = await morning_brief.get_brief()
+    await brief_cmd.finish(brief)
+
+
+# ============================================================
 # /广播 — 向所有群发送公告（超级用户专用）
 # ============================================================
 
@@ -865,6 +885,52 @@ async def handle_broadcast(bot: Bot, event: GroupMessageEvent):
 
 
 # ============================================================
+# /企鹅冷却 — 查看/修改企鹅聊天冷却时间（超级用户专用）
+# ============================================================
+
+cooldown_cmd = on_command("企鹅冷却", aliases={"企鹅限流", "企鹅间隔"}, priority=5, rule=is_superuser, block=True)
+
+
+@cooldown_cmd.handle()
+async def handle_penguin_cooldown(bot: Bot, event: GroupMessageEvent):
+    """查看或修改企鹅聊天的每人使用间隔"""
+    from . import penguin_chat
+
+    text = _get_cmd_text(event)
+
+    # 无参数 → 查看当前冷却时间
+    if not text:
+        current = penguin_chat.get_penguin_cooldown()
+        if current >= 60:
+            display = f"{current // 60} 分钟" + (f" {current % 60} 秒" if current % 60 else "")
+        else:
+            display = f"{current} 秒"
+        await cooldown_cmd.finish(
+            f"🐧 企鹅聊天冷却时间：{display}\n"
+            f"用法：/企鹅冷却 <秒数>\n"
+            f"如：/企鹅冷却 30  → 改为 30 秒\n"
+            f"    /企鹅冷却 120 → 改为 2 分钟\n"
+            f"💡 最低 5 秒，默认 60 秒"
+        )
+
+    # 有参数 → 修改冷却时间
+    new_seconds = _extract_number(text)
+    if new_seconds is None:
+        await cooldown_cmd.finish("❌ 请输入一个数字（秒），如 /企鹅冷却 30")
+
+    penguin_chat.set_penguin_cooldown(new_seconds)
+    actual = penguin_chat.get_penguin_cooldown()
+
+    if actual >= 60:
+        display = f"{actual // 60} 分钟" + (f" {actual % 60} 秒" if actual % 60 else "")
+    else:
+        display = f"{actual} 秒"
+
+    logger.info(f"[管理] /企鹅冷却 操作者:{event.user_id} → {actual}秒")
+    await cooldown_cmd.finish(f"✅ 企鹅聊天冷却已改为 {display}")
+
+
+# ============================================================
 # /洗脑 @某人 — 手动触发凑企鹅洗脑
 # ============================================================
 
@@ -879,17 +945,14 @@ async def handle_brainwash(bot: Bot, event: GroupMessageEvent):
 
     from . import brainwash
 
-    result = ""
     try:
-        result = await brainwash.brainwash_target(bot, event.group_id, target_id)
+        # brainwash_target 内部已发送洗脑消息，无需额外回复
+        await brainwash.brainwash_target(bot, event.group_id, target_id)
     except Exception as e:
         await brainwash_cmd.finish(f"❌ 洗脑失败：{e}")
         return
 
-    if result:
-        await brainwash_cmd.finish(result)
-    else:
-        await brainwash_cmd.finish()
+    await brainwash_cmd.finish()
 
 
 # ============================================================

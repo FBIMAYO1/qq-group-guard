@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  # ============================================================
+  # NapCat QQ 协议层
+  # 暴露反向 WebSocket 端口 (3001)，bot 主动连接它
+  # ============================================================
+  napcat:
+    image: napcat/napcat:latest
+    container_name: dog3-napcat
+    restart: unless-stopped
+    ports:
+      # NapCat WebUI（管理面板，浏览器扫码登录）
+      - "6099:6099"
+      # 反向 WebSocket 端口（bot 连接此端口）
+      - "3001:3001"
+    volumes:
+      # QQ 登录会话持久化（避免每次重启扫码）
+      - ./napcat-data/qq:/app/.config/QQ
+      # NapCat 配置
+      - ./napcat-data/config:/app/napcat/config
+    environment:
+      - ACCOUNT=
+      - NAPCAT_GID=$(id -g)
+      - NAPCAT_UID=$(id -u)
+    networks:
+      - bot-net
+
+  # ============================================================
+  # 狗三 QQ 机器人 (NoneBot2)
+  # 反向 WebSocket：连接 napcat:3001
+  # ============================================================
+  bot:
+    build: .
+    container_name: dog3-bot
+    restart: unless-stopped
+    volumes:
+      # 持久化数据：签到记录、违规记录、群配置等
+      - ./data:/app/plugins/group_guard/data
+    env_file:
+      - .env
+    networks:
+      - bot-net
+    depends_on:
+      - napcat
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  bot-net:
+    driver: bridge

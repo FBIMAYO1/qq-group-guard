@@ -8,8 +8,8 @@ echo   ━━━━━━━━━━━━━━━━━━━━━━
 echo.
 
 :: 1. 启动 NapCat（在独立窗口，方便扫码）
-echo   [1/2] 启动 NapCat 协议层...
-start "NapCat-协议层" /D "D:\桌面\NapCat\NapCat.44498.Shell" "D:\桌面\NapCat\NapCat.44498.Shell\napcat.bat"
+echo   [1/2] 启动 NapCat v4.18.4 协议层...
+start "NapCat-v4.18.4" /D "D:\桌面\NapCat\NapCat.v4.18.4" "D:\桌面\NapCat\NapCat.v4.18.4\napcat.bat"
 
 :: 2. 等待 NapCat 初始化（WebSocket 就绪需要时间）
 echo   [2/2] 等待 NapCat 就绪...（8秒）

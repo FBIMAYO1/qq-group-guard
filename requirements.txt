@@ -1,0 +1,9 @@
+nonebot2==2.5.0
+nonebot-adapter-onebot==2.4.6
+fastapi==0.136.3
+httpx==0.28.1
+pydantic==2.13.4
+pydantic_core==2.46.4
+PyYAML==6.0.3
+uvicorn==0.48.0
+websockets==16.0

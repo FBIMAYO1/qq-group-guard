@@ -76,41 +76,58 @@ _driver = get_driver()
 
 @_driver.on_startup
 async def _sync_groups_on_startup():
-    """启动时从 OneBot 获取当前群列表，为未配置的群补建配置"""
-    await asyncio.sleep(5)  # 等 OneBot 连接就绪
+    """启动时从 OneBot 获取当前群列表，为未配置的群补建配置。
 
-    try:
-        bots = get_bots()
-        if not bots:
-            logger.warning("[群生命周期] 启动同步失败：无可用 Bot 实例")
-            return
+    带重试机制：OneBot 连接建立需要时间，最坏情况等 30 秒。
+    """
+    MAX_RETRIES = 6
+    RETRY_INTERVAL = 5  # 秒
 
-        bot = list(bots.values())[0]
-        group_list = await bot.get_group_list()
+    for attempt in range(1, MAX_RETRIES + 1):
+        await asyncio.sleep(RETRY_INTERVAL)
 
-        gcfg = get_group_config()
-        current_gids = {str(g["group_id"]) for g in group_list}
-        existing_gids = set(gcfg.list_groups())
+        try:
+            bots = get_bots()
+            if not bots:
+                logger.info(
+                    f"[群生命周期] 等待 OneBot 连接... (第{attempt}/{MAX_RETRIES}次)"
+                )
+                continue
 
-        # 为新群补建配置
-        new_groups = current_gids - existing_gids
-        for gid in new_groups:
-            gcfg.init_group(gid)
+            bot = list(bots.values())[0]
+            group_list = await bot.get_group_list()
 
-        # 标记已退出的群为不活跃（不删除，保留历史数据）
-        left_groups = existing_gids - current_gids
-        for gid in left_groups:
-            logger.info(f"[群生命周期] 群 {gid} 已不在群列表中（可能已退出）")
+            gcfg = get_group_config()
+            current_gids = {str(g["group_id"]) for g in group_list}
+            existing_gids = set(gcfg.list_groups())
 
-        logger.info(
-            f"[群生命周期] ✅ 启动同步完成 | "
-            f"当前所在群: {len(current_gids)} | "
-            f"新初始化: {len(new_groups)} | "
-            f"已退出: {len(left_groups)}"
-        )
+            # 为新群补建配置
+            new_groups = current_gids - existing_gids
+            for gid in new_groups:
+                gcfg.init_group(gid)
 
-    except Exception as e:
-        logger.error(f"[群生命周期] 启动同步异常: {e}")
-        logger.warning(
-            "[群生命周期] 同步失败不影响使用，新群将通过入群事件自动初始化"
-        )
+            # 标记已退出的群为不活跃（不删除，保留历史数据）
+            left_groups = existing_gids - current_gids
+            for gid in left_groups:
+                logger.info(f"[群生命周期] 群 {gid} 已不在群列表中（可能已退出）")
+
+            logger.info(
+                f"[群生命周期] ✅ 启动同步完成 | "
+                f"当前所在群: {len(current_gids)} | "
+                f"新初始化: {len(new_groups)} | "
+                f"已退出: {len(left_groups)}"
+            )
+            return  # 成功后直接返回
+
+        except Exception as e:
+            logger.warning(
+                f"[群生命周期] 第{attempt}次尝试失败: {e}"
+            )
+            # 继续重试
+
+    # 所有重试都用完了还是失败
+    logger.warning(
+        "[群生命周期] 启动同步失败（已重试%d次），"
+        "不影响使用：新群将通过入群事件自动初始化",
+        MAX_RETRIES,
+    )

@@ -39,18 +39,12 @@ HOLIDAYS_2026 = [
     ("国庆节",     date(2027, 10, 1),  "🇨🇳 祖国生日快乐"),
 ]
 
-# 新闻API列表（按优先级尝试，任一成功即用）
-NEWS_APIS = [
-    {
-        "name": "tenapi",
-        "url": "https://tenapi.cn/v2/toutiaohot",
-        "parser": "tenapi",
-    },
-    {
-        "name": "vvhan",
-        "url": "https://api.vvhan.com/api/hotlist?type=zhihuHot",
-        "parser": "vvhan",
-    },
+# 新闻API列表（并行请求，合并去重后取TOP N）
+# orz.ai 每日热点 API — 免费，约半小时刷新
+NEWS_SOURCES = [
+    ("orz_baidu",  "https://orz.ai/api/v1/dailynews?platform=baidu"),
+    ("orz_weibo",  "https://orz.ai/api/v1/dailynews?platform=weibo"),
+    ("orz_zhihu",  "https://orz.ai/api/v1/dailynews?platform=zhihu"),
 ]
 
 NEWS_COUNT = 5  # 最多展示5条新闻
@@ -60,57 +54,60 @@ NEWS_COUNT = 5  # 最多展示5条新闻
 # 新闻获取
 # ============================================================
 
-def _parse_tenapi(data: dict) -> list[str]:
-    """解析 tenapi 返回格式: {code:200, data:[{name:"xxx"}, ...]}"""
+def _parse_orz(data: dict) -> list[str]:
+    """解析 orz.ai 返回格式: {status:"200", data:[{title:"xxx"}, ...]}"""
+    if str(data.get("status")) != "200":
+        return []
     items = data.get("data", [])
     headlines = []
-    for item in items[:NEWS_COUNT]:
-        name = item.get("name", "")
-        if name:
-            headlines.append(name)
-    return headlines
-
-
-def _parse_vvhan(data: dict) -> list[str]:
-    """解析 vvhan 返回格式: {success:true, data:[{title:"xxx"}, ...]}"""
-    items = data.get("data", [])
-    headlines = []
-    for item in items[:NEWS_COUNT]:
-        title = item.get("title", "") or item.get("name", "") or item.get("desc", "")
+    for item in items:
+        title = item.get("title", "").strip()
         if title:
             headlines.append(title)
     return headlines
 
 
 async def _fetch_news() -> list[str]:
-    """依次尝试多个新闻API，返回头条列表"""
-    for api in NEWS_APIS:
+    """并行请求多个平台，合并去重后取 TOP N 条"""
+
+    async def _fetch_one(name: str, url: str) -> list[str]:
+        """请求单个平台并解析"""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(api["url"], headers={
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                resp = await client.get(url, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 })
                 if resp.status_code != 200:
-                    logger.warning(f"[早报] {api['name']} 返回 {resp.status_code}")
-                    continue
-
+                    logger.warning(f"[早报] {name} 返回 {resp.status_code}")
+                    return []
                 data = resp.json()
-                if api["parser"] == "tenapi":
-                    headlines = _parse_tenapi(data)
-                elif api["parser"] == "vvhan":
-                    headlines = _parse_vvhan(data)
-                else:
-                    continue
-
+                headlines = _parse_orz(data)
                 if headlines:
-                    logger.info(f"[早报] ✅ 使用 {api['name']} 获取到 {len(headlines)} 条新闻")
-                    return headlines
+                    logger.info(f"[早报] ✅ {name} 获取到 {len(headlines)} 条")
                 else:
-                    logger.warning(f"[早报] {api['name']} 解析结果为空")
-
+                    logger.warning(f"[早报] {name} 解析结果为空")
+                return headlines
         except Exception as e:
-            logger.warning(f"[早报] {api['name']} 请求失败: {e}")
-            continue
+            logger.warning(f"[早报] {name} 请求失败: {e}")
+            return []
+
+    # 并行请求所有平台（ensure_future + await，避免 gather 兼容性问题）
+    futures = [asyncio.ensure_future(_fetch_one(name, url)) for name, url in NEWS_SOURCES]
+    results = [await f for f in futures]
+
+    # 合并去重（按前缀30字去重，避免同条新闻标题略有差异）
+    seen: set[str] = set()
+    merged: list[str] = []
+    for headlines in results:
+        for h in headlines:
+            key = h[:30]
+            if key not in seen:
+                seen.add(key)
+                merged.append(h)
+
+    if merged:
+        logger.info(f"[早报] 合并去重后共 {len(merged)} 条，取前 {NEWS_COUNT} 条")
+        return merged[:NEWS_COUNT]
 
     return []
 
@@ -153,6 +150,11 @@ def _get_nearest_holiday(today: date) -> tuple[str, int, str]:
 # ============================================================
 # 构建早报文本
 # ============================================================
+
+async def get_brief() -> str:
+    """获取早报内容（供外部命令调用）"""
+    return await _build_brief()
+
 
 async def _build_brief() -> str:
     """构建早安短报完整内容"""
