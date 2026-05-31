@@ -50,6 +50,7 @@ class GroupConfig:
     penguin_chat_enabled: bool = True   # @企鹅聊天
     spam_enabled: bool = True           # 刷屏检测
     ad_enabled: bool = True             # 广告/链接拦截
+    image_check_enabled: bool = False   # 图片违禁检测（默认关闭，需视觉API）
 
     # ---- 元数据 ----
     joined_at: str = ""                 # 入群时间 ISO 格式
@@ -69,6 +70,7 @@ class GlobalDefaults:
     default_penguin_chat_enabled: bool = True
     default_spam_enabled: bool = True
     default_ad_enabled: bool = True
+    default_image_check_enabled: bool = False  # 图片检测默认关闭
     enabled_groups: list[str] = field(default_factory=list)  # 群过滤白名单
 
 
@@ -142,6 +144,7 @@ class GroupConfigStore:
             penguin_chat_enabled=defaults.default_penguin_chat_enabled,
             spam_enabled=defaults.default_spam_enabled,
             ad_enabled=defaults.default_ad_enabled,
+            image_check_enabled=defaults.default_image_check_enabled,
             joined_at=now,
             updated_at=now,
         )

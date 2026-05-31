@@ -70,6 +70,9 @@ from . import morning_brief  # noqa: F401, E402
 # 导入掉线通知模块（注册 bot_offline 事件监听）
 from . import offline_notify  # noqa: F401, E402
 
+# 导入图片违禁检测模块（注册视觉模型审核）
+from . import image_checker  # noqa: F401, E402
+
 # 导入签到打卡模块（注册 /签到 /签到排行 命令）
 from . import checkin  # noqa: F401, E402
 
@@ -125,6 +128,29 @@ async def is_group_msg_and_not_whitelisted(event: GroupMessageEvent) -> bool:
 
 
 # ============================================================
+# 辅助函数：图片违规检测
+# ============================================================
+
+def _has_image_segments(event: GroupMessageEvent) -> bool:
+    """检查消息是否包含图片段"""
+    for seg in event.message:
+        if seg.type == "image":
+            return True
+    return False
+
+
+async def _check_group_images(event: GroupMessageEvent) -> CheckResult | None:
+    """检查群消息中的图片是否违规（含开关检查）"""
+    gid = str(event.group_id)
+    gcfg = get_group_config()
+    if not gcfg.get(gid).image_check_enabled:
+        return None
+    if not _has_image_segments(event):
+        return None
+    return await image_checker.check_images(event)
+
+
+# ============================================================
 # 消息监听器
 # ============================================================
 
@@ -140,6 +166,23 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
     """处理群消息 — 关键词预检 + AI 语义判断"""
 
     text = event.get_plaintext()
+
+    # 图片违禁检测（有图片时始终检查，get_plaintext() 对图片返回 "[图片]" 不是空串）
+    image_result = await _check_group_images(event)
+    if image_result:
+        punisher = get_punisher()
+        punish_result = await punisher.execute(bot, event, image_result)
+        await bot.send_group_msg(
+            group_id=event.group_id,
+            message=punish_result.message,
+        )
+        logger.info(
+            f"[群管] 图片处罚完成 | "
+            f"动作:{punish_result.action} | "
+            f"第{punish_result.violation_count}次违规"
+        )
+        return
+
     if not text:
         return
 

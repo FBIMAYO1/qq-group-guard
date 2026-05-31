@@ -614,7 +614,8 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
         f"情绪安慰：{'✅' if config.comfort_enabled else '❌'}",
         f"  洗脑游戏：{'✅' if config.brainwash_enabled else '❌'} | "
         f"刷屏检测：{'✅' if config.spam_enabled else '❌'}",
-        f"  广告拦截：{'✅' if config.ad_enabled else '❌'}",
+        f"  广告拦截：{'✅' if config.ad_enabled else '❌'} | "
+        f"图片检测：{'✅' if config.image_check_enabled else '❌'}",
     ])
 
     msg = (
@@ -646,6 +647,7 @@ FEATURE_MAP = {
     "企鹅聊天": "penguin_chat_enabled",
     "刷屏检测": "spam_enabled",
     "广告拦截": "ad_enabled",
+    "图片检测": "image_check_enabled",
 }
 
 FEATURE_LABELS = {
@@ -656,6 +658,7 @@ FEATURE_LABELS = {
     "penguin_chat_enabled": "企鹅聊天",
     "spam_enabled": "刷屏检测",
     "ad_enabled": "广告拦截",
+    "image_check_enabled": "图片检测",
 }
 
 feature_toggle = on_command("功能开关", aliases={"功能"}, priority=5, rule=is_admin, block=True)
@@ -740,7 +743,7 @@ async def handle_group_list(bot: Bot, event: GroupMessageEvent):
         mute = "🔇" if config.mute_enabled else "⚠️"
         lines.append(
             f"  {i}. 群 {gid} | {guard}检测 {mute}禁言 | "
-            f"功能:{sum([config.welcome_enabled, config.morning_brief_enabled, config.brainwash_enabled, config.comfort_enabled, config.penguin_chat_enabled, config.spam_enabled, config.ad_enabled])}/7"
+            f"功能:{sum([config.welcome_enabled, config.morning_brief_enabled, config.brainwash_enabled, config.comfort_enabled, config.penguin_chat_enabled, config.spam_enabled, config.ad_enabled, config.image_check_enabled])}/8"
         )
 
     await group_list_cmd.finish("\n".join(lines))
@@ -760,6 +763,7 @@ DEFAULT_MAP = {
     "企鹅聊天": "default_penguin_chat_enabled",
     "刷屏检测": "default_spam_enabled",
     "广告拦截": "default_ad_enabled",
+    "图片检测": "default_image_check_enabled",
 }
 
 DEFAULT_LABELS = {
@@ -772,6 +776,7 @@ DEFAULT_LABELS = {
     "default_penguin_chat_enabled": "企鹅聊天",
     "default_spam_enabled": "刷屏检测",
     "default_ad_enabled": "广告拦截",
+    "default_image_check_enabled": "图片检测",
 }
 
 global_default_cmd = on_command("全局默认", aliases={"默认配置"}, priority=5, rule=is_superuser, block=True)
