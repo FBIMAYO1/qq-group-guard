@@ -32,3 +32,8 @@ data/
 
 # NoneBot
 node_modules/
+
+# Claude / Agent 工具本地状态
+.agents/
+.claude/
+skills-lock.json

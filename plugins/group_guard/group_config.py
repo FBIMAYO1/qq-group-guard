@@ -45,7 +45,7 @@ class GroupConfig:
     # ---- 功能开关 ----
     welcome_enabled: bool = True        # 入群欢迎
     morning_brief_enabled: bool = True  # 早安短报
-    brainwash_enabled: bool = True      # 凑企鹅洗脑
+    brainwash_enabled: bool = False     # 随机洗脑（默认关闭）
     comfort_enabled: bool = True        # 情绪安慰
     penguin_chat_enabled: bool = True   # @企鹅聊天
     spam_enabled: bool = True           # 刷屏检测
@@ -65,7 +65,7 @@ class GlobalDefaults:
     default_mute_enabled: bool = False
     default_welcome_enabled: bool = True
     default_morning_brief_enabled: bool = True
-    default_brainwash_enabled: bool = True
+    default_brainwash_enabled: bool = False
     default_comfort_enabled: bool = True
     default_penguin_chat_enabled: bool = True
     default_spam_enabled: bool = True
