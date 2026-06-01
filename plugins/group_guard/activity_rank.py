@@ -7,43 +7,28 @@
 - 组件 B：命令 /活跃榜（展示 TOP N）
 """
 
-import json
 import re
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from nonebot import on_command, on_message, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
+
+from .store import JsonStore
 
 
 # ============================================================
 # 持久化存储
 # ============================================================
-DATA_DIR = Path(__file__).parent / "data"
-DATA_FILE = DATA_DIR / "activity.json"
+DATA_FILE = "activity.json"
 
 
-class ActivityStorage:
+class ActivityStorage(JsonStore):
     """群活跃度存储"""
 
     def __init__(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        self._data: dict = self._load()
+        super().__init__(DATA_FILE)
         self._cleanup_old()
-
-    def _load(self) -> dict:
-        if DATA_FILE.exists():
-            try:
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                return {}
-        return {}
-
-    def _save(self):
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
 
     @staticmethod
     def _today_str() -> str:
@@ -96,7 +81,7 @@ class ActivityStorage:
                 changed = True
 
         if changed:
-            self._save()
+            self.save()
 
 
 # 全局单例

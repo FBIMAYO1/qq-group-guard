@@ -8,40 +8,21 @@ AI 语义判断模块 - 使用 DeepSeek API 进行深度违规识别
 """
 
 import json
-import os
 import time
 import re
 from pathlib import Path
 from dataclasses import dataclass
 from openai import AsyncOpenAI
 
+from nonebot import logger
+
 from .checker import CheckResult
-
-
-# 手动加载 .env 文件（兼容 NoneBot 的 env 加载机制）
-def _load_env_file():
-    """从 .env 文件加载环境变量"""
-    # 查找项目根目录的 .env
-    env_path = Path(__file__).parent.parent.parent / ".env"
-    if env_path.exists():
-        with open(env_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    if key not in os.environ or not os.environ[key]:
-                        os.environ[key] = value
-
-_load_env_file()
-
-# DeepSeek API 配置
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-chat"
-
-# 从环境变量读取 API Key
-API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+from .settings import (
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
+    DEEPSEEK_API_KEY as API_KEY,
+    GUARD_CONFIDENCE_THRESHOLD,
+)
 
 # 群规判定提示词
 SYSTEM_PROMPT = """你是QQ群内容审核员。判断群聊消息是否违反以下群规。
@@ -391,13 +372,13 @@ class DeepSeekChecker:
     def __init__(self):
         if not API_KEY:
             self.client = None
-            print("[AI检测] ⚠️ 未配置 DEEPSEEK_API_KEY，AI 检测不可用")
+            logger.warning("[AI检测] ⚠️ 未配置 DEEPSEEK_API_KEY，AI 检测不可用")
             return
         self.client = AsyncOpenAI(
             api_key=API_KEY,
             base_url=DEEPSEEK_BASE_URL,
         )
-        print(f"[AI检测] ✅ DeepSeek 已就绪，模型: {DEEPSEEK_MODEL}")
+        logger.info(f"[AI检测] ✅ DeepSeek 已就绪，模型: {DEEPSEEK_MODEL}")
 
     def is_available(self) -> bool:
         """检查 AI 检测是否可用"""
@@ -443,7 +424,7 @@ class DeepSeekChecker:
 
             # 如果解析失败，不标记违规（宁可漏过不可误杀）
             if result is None:
-                print(f"[AI检测] ⚠️ JSON解析失败，原始响应: {raw[:200]}")
+                logger.warning(f"[AI检测] ⚠️ JSON解析失败，原始响应: {raw[:200]}")
                 return AiCheckResult(
                     is_violation=False,
                     category=None,
@@ -456,13 +437,16 @@ class DeepSeekChecker:
             if "violation" in result:
                 result["is_violation"] = result.pop("violation")
 
-            # 置信度阈值：低于 0.85 一律视为安全
+            # 置信度阈值：低于阈值一律视为安全（阈值集中在 settings.py）
             confidence = float(result.get("confidence", 0.0))
-            if confidence < 0.85:
+            if confidence < GUARD_CONFIDENCE_THRESHOLD:
                 result["is_violation"] = False
                 result["category"] = ""
                 if not result.get("reason"):
-                    result["reason"] = f"置信度过低({confidence:.2f}<0.85)，不予判定违规"
+                    result["reason"] = (
+                        f"置信度过低({confidence:.2f}<{GUARD_CONFIDENCE_THRESHOLD})，"
+                        f"不予判定违规"
+                    )
 
             result["confidence"] = confidence
             result["latency_seconds"] = latency
@@ -473,7 +457,7 @@ class DeepSeekChecker:
         except Exception as e:
             latency = time.time() - start
             error_msg = f"{type(e).__name__}: {e}"
-            print(f"[AI检测] ❌ 调用失败: {error_msg}")
+            logger.error(f"[AI检测] ❌ 调用失败: {error_msg}")
             return AiCheckResult(
                 is_violation=False,
                 category=None,

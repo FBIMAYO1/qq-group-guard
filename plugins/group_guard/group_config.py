@@ -14,20 +14,16 @@
         ...
 """
 
-import json
 import time
 from dataclasses import dataclass, asdict, field
-from pathlib import Path
 from typing import Optional
 
 from nonebot import logger
 
+from .store import JsonStore
 
-# ============================================================
-# 数据目录
-# ============================================================
-DATA_DIR = Path(__file__).parent / "data"
-CONFIG_FILE = DATA_DIR / "group_config.json"
+
+CONFIG_FILE = "group_config.json"
 
 
 # ============================================================
@@ -78,42 +74,22 @@ class GlobalDefaults:
 # 配置存储
 # ============================================================
 
-class GroupConfigStore:
+class GroupConfigStore(JsonStore):
     """群配置持久化存储 — 单例"""
 
     GLOBAL_KEY = "_global"
 
     def __init__(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        self._data: dict = self._load()
+        super().__init__(CONFIG_FILE)
         self._ensure_global_defaults()
 
-    # ---- 文件 I/O ----
-
-    def _load(self) -> dict:
-        """从 JSON 文件加载"""
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
-                logger.warning(f"[群配置] 加载失败: {e}，使用空配置")
-                return {}
-        return {}
-
-    def _save(self):
-        """保存到 JSON 文件"""
-        try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, ensure_ascii=False, indent=2)
-        except IOError as e:
-            logger.error(f"[群配置] 保存失败: {e}")
+    # ---- 全局默认值初始化 ----
 
     def _ensure_global_defaults(self):
         """确保全局默认值存在"""
         if self.GLOBAL_KEY not in self._data:
             self._data[self.GLOBAL_KEY] = asdict(GlobalDefaults())
-            self._save()
+            self.save()
 
     # ---- 群配置 CRUD ----
 
@@ -150,7 +126,7 @@ class GroupConfigStore:
         )
 
         self._data[group_id] = asdict(config)
-        self._save()
+        self.save()
         logger.info(f"[群配置] + 新群 {group_id} 已初始化")
         return config
 
@@ -173,14 +149,14 @@ class GroupConfigStore:
 
         self._data[group_id][key] = value
         self._data[group_id]["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        self._save()
+        self.save()
         return True
 
     def remove_group(self, group_id: str):
         """移除某群配置（退群时调用）"""
         if group_id in self._data:
             del self._data[group_id]
-            self._save()
+            self.save()
             logger.info(f"[群配置] - 群 {group_id} 配置已移除")
 
     def list_groups(self) -> list[str]:
@@ -213,7 +189,7 @@ class GroupConfigStore:
             return False
 
         self._data[self.GLOBAL_KEY][key] = value
-        self._save()
+        self.save()
         return True
 
     def get_enabled_groups(self) -> list[str]:

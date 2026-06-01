@@ -21,6 +21,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent
 from nonebot import logger
 
 from .checker import CheckResult
+from . import settings  # noqa: F401 — 确保 .env 在子进程启动前已加载到 os.environ
 
 # ============================================================
 # vision.js 路径

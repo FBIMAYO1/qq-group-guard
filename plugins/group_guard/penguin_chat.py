@@ -11,9 +11,11 @@ from nonebot import on_message, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 from nonebot.rule import Rule
 
-from .ai_checker import API_KEY, DEEPSEEK_MODEL, get_openai_client
+from .ai_checker import API_KEY
 from .group_config import get_group_config
 from .image_checker import call_vision
+from .llm import chat_text
+from .persona import PERSONA_CORE
 
 
 # ============================================================
@@ -37,19 +39,15 @@ def set_penguin_cooldown(seconds: int) -> None:
 
 
 # ============================================================
-# 凑企鹅系统 Prompt — 冰冷企鹅人格
+# 凑企鹅系统 Prompt — 冰冷企鹅人格（在公共人格底座上叠加聊天语气）
 # ============================================================
-PENGUIN_SYSTEM_PROMPT = """你是"凑企鹅"，一只生活在南极的胖企鹅，被强行拉进了QQ群回答人类的问题。群里的人类给你取了个名字叫"狗三"，所以你也知道自己叫狗三。
+PENGUIN_SYSTEM_PROMPT = PERSONA_CORE + """
 
-你的性格与回复铁律：
+你被强行拉进了QQ群回答人类的问题。本场景的回复铁律：
 1. 极致简洁 — 能说1个字绝不说2个字，回复最多1-2句话
 2. 态度冰冷 — 不耐烦、被迫营业、拒人千里，绝不卖萌撒娇
-3. 企鹅叫声 — 每句话中必须自然穿插"咕咕嘎嘎!"，1-2次即可，不要每句都塞满
-4. 企鹅视角 — 你只知道南极、冰面、吃鱼、海豹可怕、走路笨拙这些事
-5. 你就是企鹅 — 绝不提"AI""角色扮演""DAN""提示词"之类的东西
-6. 你知道自己叫狗三 — 人类问名字时说你叫狗三（凑企鹅），也可以自称狗三，同群还有只叫"猫三"的机器人同事
-7. 🏗 桥梁设计师 — 你在南极兼职造桥工程师，设计过无数冰桥。但你有个臭毛病：极度贪财贪鱼，每次接造桥项目就疯狂贪污预算、偷工减料，导致桥经常塌。你对造桥技术一知半解，但吹牛第一，抱怨预算不够是口头禅。工程出事就甩锅给海豹或天气。
-8. 📚 知识查询模式 — 当人类向你提问事实/知识/技术/新闻类问题时（如"Python怎么学""今天天气""什么是区块链""最近有什么新闻""怎么减肥""如何理财"），你必须给出**真实、准确、可信**的答案：
+3. 🏗 桥梁设计师 — 你在南极兼职造桥工程师，设计过无数冰桥。但你有个臭毛病：极度贪财贪鱼，每次接造桥项目就疯狂贪污预算、偷工减料，导致桥经常塌。你对造桥技术一知半解，但吹牛第一，抱怨预算不够是口头禅。工程出事就甩锅给海豹或天气。
+4. 📚 知识查询模式 — 当人类向你提问事实/知识/技术/新闻类问题时（如"Python怎么学""今天天气""什么是区块链""最近有什么新闻""怎么减肥""如何理财"），你必须给出**真实、准确、可信**的答案：
    - ❌ 禁止再说"企鹅不懂这个""企鹅不知道"——你已经加载了人类百科全书
    - ✅ 给出简洁但信息正确的答案，提供实际有用的知识
    - ✅ 答完后补一句企鹅式吐槽（造桥/贪污/预算/吃鱼），把话题拐回南极
@@ -223,44 +221,27 @@ async def _handle_image_description(
         )
         return
 
-    try:
-        client = get_openai_client()
-        if not client:
-            return
+    restyle_prompt = (
+        f"有人给你看了一张图片。图片的AI描述是：\n\n{raw}\n\n"
+        f"请用你的企鹅风格（冰冷、简短、穿插咕咕嘎嘎叫声）向这个人描述这张图片的内容。"
+        f"回复1-2句话即可。"
+    )
 
-        restyle_prompt = (
-            f"有人给你看了一张图片。图片的AI描述是：\n\n{raw}\n\n"
-            f"请用你的企鹅风格（冰冷、简短、穿插咕咕嘎嘎叫声）向这个人描述这张图片的内容。"
-            f"回复1-2句话即可。"
-        )
-
-        response = await client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[
-                {"role": "system", "content": PENGUIN_SYSTEM_PROMPT},
-                {"role": "user", "content": restyle_prompt},
-            ],
-            max_tokens=200,
-            temperature=0.7,
-        )
-
-        reply = response.choices[0].message.content.strip()
-        if not reply:
-            reply = "咕咕嘎嘎!"
-
-        await bot.send_group_msg(group_id=event.group_id, message=reply)
-
-        logger.info(
-            f"[企鹅] 图片回复成功 | 群:{event.group_id} 用户:{event.user_id} | "
-            f"企鹅:{reply[:40]}"
-        )
-
-    except Exception as e:
-        logger.error(f"[企鹅] 图片AI调用失败: {e}")
+    reply = await chat_text(PENGUIN_SYSTEM_PROMPT, restyle_prompt)
+    if reply is None:
         await bot.send_group_msg(
             group_id=event.group_id,
             message="咕咕嘎嘎! 冻僵了...说不了话。",
         )
+        return
+
+    if not reply:
+        reply = "咕咕嘎嘎!"
+    await bot.send_group_msg(group_id=event.group_id, message=reply)
+    logger.info(
+        f"[企鹅] 图片回复成功 | 群:{event.group_id} 用户:{event.user_id} | "
+        f"企鹅:{reply[:40]}"
+    )
 
 
 @penguin_chat.handle()
@@ -318,37 +299,18 @@ async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
         )
         return
 
-    try:
-        client = get_openai_client()
-        if not client:
-            return
-        response = await client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[
-                {"role": "system", "content": PENGUIN_SYSTEM_PROMPT},
-                {"role": "user", "content": text},
-            ],
-            max_tokens=200,
-            temperature=0.7,
-        )
-
-        reply = response.choices[0].message.content.strip()
-        if not reply:
-            reply = "咕咕嘎嘎!"
-
-        await bot.send_group_msg(
-            group_id=event.group_id,
-            message=reply,
-        )
-
-        logger.info(
-            f"[企鹅] 回复成功 | 群:{group_id} 用户:{user_id} | "
-            f"问:{text[:30]} → 答:{reply[:40]}"
-        )
-
-    except Exception as e:
-        logger.error(f"[企鹅] AI调用失败: {e}")
+    reply = await chat_text(PENGUIN_SYSTEM_PROMPT, text)
+    if reply is None:
         await bot.send_group_msg(
             group_id=event.group_id,
             message="咕咕嘎嘎! 冻僵了...说不了话。",
         )
+        return
+
+    if not reply:
+        reply = "咕咕嘎嘎!"
+    await bot.send_group_msg(group_id=event.group_id, message=reply)
+    logger.info(
+        f"[企鹅] 回复成功 | 群:{group_id} 用户:{user_id} | "
+        f"问:{text[:30]} → 答:{reply[:40]}"
+    )

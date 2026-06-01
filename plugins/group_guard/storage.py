@@ -16,40 +16,23 @@
 }
 """
 
-import json
 import time
-from pathlib import Path
+
+from .store import JsonStore
 
 
-DATA_DIR = Path(__file__).parent / "data"
-DATA_FILE = DATA_DIR / "violations.json"
+DATA_FILE = "violations.json"
 
 
-class ViolationStorage:
+class ViolationStorage(JsonStore):
     """违规记录存储管理"""
 
     WHITELIST_KEY = "_whitelist"
     RESET_KEY = "_last_reset"
 
     def __init__(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        self._data: dict = self._load()
+        super().__init__(DATA_FILE)
         self._check_daily_reset()
-
-    def _load(self) -> dict:
-        """从文件加载数据"""
-        if DATA_FILE.exists():
-            try:
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                return {}
-        return {}
-
-    def _save(self):
-        """保存数据到文件"""
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
 
     # ============================================================
     # 每日清零
@@ -77,7 +60,7 @@ class ViolationStorage:
                 self._data[gid][self.RESET_KEY] = today
                 changed = True
         if changed:
-            self._save()
+            self.save()
 
     # ============================================================
     # 违规记录
@@ -106,7 +89,7 @@ class ViolationStorage:
             "action": action,
             "text": text,
         })
-        self._save()
+        self.save()
         return user_data["count"]
 
     def add_manual_violation(
@@ -130,7 +113,7 @@ class ViolationStorage:
                 "matched": reason,
                 "action": "手动违规",
             })
-        self._save()
+        self.save()
         return user_data["count"]
 
     def set_violation_count(
@@ -151,7 +134,7 @@ class ViolationStorage:
                     "action": "手动调整",
                 })
         self._data[group_id][user_id]["count"] = count
-        self._save()
+        self.save()
         return count
 
     def remove_last_violation(self, group_id: str, user_id: str) -> bool:
@@ -162,7 +145,7 @@ class ViolationStorage:
                 user_data["count"] -= 1
                 if user_data["records"]:
                     user_data["records"].pop()
-                self._save()
+                self.save()
                 return True
             return False
         except KeyError:
@@ -174,7 +157,7 @@ class ViolationStorage:
             records = self._data[group_id][user_id]["records"]
             if records:
                 records[-1]["action"] = action
-                self._save()
+                self.save()
         except KeyError:
             pass
 
@@ -197,7 +180,7 @@ class ViolationStorage:
         """重置用户违规记录"""
         try:
             del self._data[group_id][user_id]
-            self._save()
+            self.save()
             return True
         except KeyError:
             return False
@@ -239,7 +222,7 @@ class ViolationStorage:
             self._data[group_id][self.WHITELIST_KEY] = []
         if user_id not in self._data[group_id][self.WHITELIST_KEY]:
             self._data[group_id][self.WHITELIST_KEY].append(user_id)
-            self._save()
+            self.save()
             return True
         return False
 
@@ -249,7 +232,7 @@ class ViolationStorage:
             wl = self._data[group_id].get(self.WHITELIST_KEY, [])
             if user_id in wl:
                 wl.remove(user_id)
-                self._save()
+                self.save()
                 return True
             return False
         except KeyError:

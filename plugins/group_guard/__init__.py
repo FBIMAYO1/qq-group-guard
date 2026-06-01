@@ -12,7 +12,6 @@ from nonebot.adapters.onebot.v11 import (
 )
 from nonebot.rule import Rule
 
-import re
 import random
 import asyncio
 from .checker import CheckResult
@@ -21,27 +20,11 @@ from .ai_checker import get_ai_checker
 from .storage import get_storage
 from .config import plugin_config
 from .group_config import get_group_config
+from .keyword_rules import KEYWORD_VIOLATIONS, SAFE_ABBREVS
 
 # ============================================================
-# 关键词预检层 — 无需 AI 的直接命中的违规模式
-# 在 AI 调用之前做快速匹配，节省 token 并确保不漏判
+# 关键词预检层 — 词库已抽到 keyword_rules.py（主入口只负责装配）
 # ============================================================
-_KEYWORD_VIOLATIONS: list[tuple[re.Pattern, str, str]] = [
-    # (正则, 类别, 原因说明)
-    # === R18 色情 ===
-    (re.compile(r'自慰|zw\b'), "R18", "直接提及自慰"),
-    (re.compile(r'扫福瑞|sofree|骚福瑞|sao.*福瑞'), "R18", "涉黄内容"),
-    (re.compile(r'口交|口\s*交|kj\b'), "R18", "直接提及口交"),
-    (re.compile(r'抠你的|扣你的'), "R18", "涉黄暗示"),
-    (re.compile(r'颜射|颜\s*射'), "R18", "直接提及颜射"),
-    (re.compile(r'高潮|高\s*潮|gc\b'), "R18", "直接提及高潮"),
-    (re.compile(r'坐上来自己动|坐上来.*动'), "R18", "涉黄内容"),
-    # === 辱骂 ===
-    (re.compile(r'操你|草你|艹你|曹你|肏你'), "辱骂", "直接辱骂"),
-    (re.compile(r'傻逼|sb\b|5b\b|傻福|煞笔|沙比|纱碧|傻杯'), "辱骂", "直接辱骂"),
-    (re.compile(r'cnm|cnmb|操你妈|草你妈|艹你妈'), "辱骂", "直接辱骂"),
-    (re.compile(r'nmsl|你妈死了|你冯死了|你🐴死了'), "辱骂", "直接辱骂"),
-]
 
 # 加载配置（config.py 中的全局单例，兼容层）
 
@@ -198,7 +181,7 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
 
     # ---- 关键词预检层：无需 AI 的直接命中 ----
     keyword_match = False
-    for pattern, category, reason in _KEYWORD_VIOLATIONS:
+    for pattern, category, reason in KEYWORD_VIOLATIONS:
         if pattern.search(text_stripped):
             keyword_match = True
             result = CheckResult(
@@ -235,14 +218,7 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
         return  # 已由关键词处理，不走 AI
 
     # 已知无害的拼音缩写/网络用语（跳过AI，避免误判）
-    # "zdjd"=真的假的 "yysy"=有一说一 "nsdd"=你说得对 "xswl"=笑死我了 等
-    _SAFE_ABBREVS = {
-        "zdjd", "yysy", "nsdd", "xswl", "awsl", "yyds", "dbq",
-        "srds", "u1s1", "tql", "pyq", "bhys", "nbsl", "zqsg",
-        "pljj", "plmm", "xjj", "xgg", "gkd", "bdjw", "lgld",
-        "y1s1", "jjww", "ybb", "wl", "ky", "bp", "blx",
-    }
-    if text_stripped.lower() in _SAFE_ABBREVS:
+    if text_stripped.lower() in SAFE_ABBREVS:
         return
 
     # 太短的消息跳过（"嗯""好的"之类不用 AI）

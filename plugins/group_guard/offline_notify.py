@@ -12,11 +12,12 @@ import asyncio
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 from nonebot import on_notice, get_driver, get_bots, logger
 from nonebot.adapters.onebot.v11 import Bot, NoticeEvent
 from nonebot.rule import Rule
+
+from .settings import NAPCAT_DIR, QQ_DATA_DIR, napcat_app_dir
 
 
 # ============================================================
@@ -30,11 +31,8 @@ HEARTBEAT_TIMEOUT = 10            # 心跳 API 调用超时（秒）
 
 # 致命掉线后自动清除会话 + 重启 NapCat
 AUTO_CLEAR_ON_FATAL = True        # 致命掉线自动清除会话
-NAPCAT_DIR = Path("D:/桌面/NapCat/NapCat.44498.Shell")
 NAPCAT_RESTART_DELAY = 3          # 杀进程后等几秒再启动
-
-# QQ 会话数据目录（登录态存储位置）
-QQ_DATA_DIR = Path(os.environ.get("APPDATA", "")) / "QQ"
+# NAPCAT_DIR / QQ_DATA_DIR 由 settings.py 集中提供（路径不再硬编码）
 
 # 致命掉线关键字 — 匹配到则跳过自动重连（必须扫码）
 FATAL_OFFLINE_KEYWORDS = [
@@ -109,26 +107,32 @@ def _clear_qq_session():
         except Exception as e:
             failed.append(f"{f}: {e}")
 
-    # ---- NapCat 缓存 ----
-    napcat_cache = NAPCAT_DIR / "versions" / "9.9.26-44498" / "resources" / "app" / "napcat" / "cache"
-    if napcat_cache.exists():
-        try:
-            shutil.rmtree(napcat_cache)
-            cleared.append(str(napcat_cache))
-        except Exception as e:
-            failed.append(f"{napcat_cache}: {e}")
+    # ---- NapCat 缓存 / 日志（版本目录自动探测，不写死版本号）----
+    napcat_app = napcat_app_dir()
+    if napcat_app:
+        napcat_cache = napcat_app / "cache"
+        if napcat_cache.exists():
+            try:
+                shutil.rmtree(napcat_cache)
+                cleared.append(str(napcat_cache))
+            except Exception as e:
+                failed.append(f"{napcat_cache}: {e}")
 
-    # ---- NapCat 日志（可选，太大了清一下）----
-    napcat_logs = NAPCAT_DIR / "versions" / "9.9.26-44498" / "resources" / "app" / "napcat" / "logs"
-    if napcat_logs.exists():
-        try:
-            for log_file in napcat_logs.glob("*.log"):
-                try:
-                    log_file.unlink()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        napcat_logs = napcat_app / "logs"
+        if napcat_logs.exists():
+            try:
+                for log_file in napcat_logs.glob("*.log"):
+                    try:
+                        log_file.unlink()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    else:
+        logger.warning(
+            f"[掉线通知] ⚠️ 未找到 NapCat app 目录（NAPCAT_DIR={NAPCAT_DIR}），"
+            f"跳过 NapCat 缓存清理"
+        )
 
     # ---- QQ 日志 ----
     qq_logs = QQ_DATA_DIR / "log"

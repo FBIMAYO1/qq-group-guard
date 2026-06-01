@@ -17,8 +17,9 @@ import time
 from nonebot import on_message, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 from nonebot.rule import Rule
-from .ai_checker import DEEPSEEK_MODEL, get_openai_client, _extract_json_from_raw
 from .group_config import get_group_config
+from .llm import chat_json
+from .persona import PERSONA_CORE
 
 
 # ============================================================
@@ -39,7 +40,9 @@ EMOTION_WINDOW = 300          # 窗口时间（秒），超过此间隔视为不
 # ============================================================
 # AI Prompt — 情绪检测 + 企鹅安慰
 # ============================================================
-EMOTION_SYSTEM_PROMPT = """你是"凑企鹅"，一只生活在南极的胖企鹅。你是群聊里的情绪观察员，也是大家的朋友。
+EMOTION_SYSTEM_PROMPT = PERSONA_CORE + """
+
+本场景：你是群聊里的情绪观察员，也是大家的朋友。注意——这个场景里你可以温暖，不必像平时聊天那样冰冷。
 
 你的使命：
 1. 发现群友的**明显**负面情绪时，给予真诚的安慰和情绪价值
@@ -168,105 +171,85 @@ async def handle_emotion(bot: Bot, event: GroupMessageEvent):
     # ---- 定期清理过期缓冲 ----
     _clean_expired_buffer(now)
 
-    # ---- 调用 AI 检测情绪 ----
-    client = get_openai_client()
-    if not client:
-        return
-
-    try:
-        response = await client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=[
-                {"role": "system", "content": EMOTION_SYSTEM_PROMPT},
-                {"role": "user", "content": text},
-            ],
-            max_tokens=200,
-            temperature=0.3,
-        )
-
-        raw = response.choices[0].message.content.strip()
-
-        # 解析 JSON（使用共享的 JSON 清洗函数）
-        import json as _json
-        cleaned = _extract_json_from_raw(raw)
-        result = _json.loads(cleaned)
-
-        has_emotion = result.get("has_emotion", False)
-        emotion_type = result.get("emotion_type", "")
-
-        # ---- 高危（自残/轻生）单条即触发 ----
-        if has_emotion and emotion_type == "高危":
-            comfort_msg = result.get("comfort", "").strip()
-            if comfort_msg:
-                _cooldown[cooldown_key] = now
-                # 高危触发时清空该用户缓冲，避免重复触发
-                _emotion_buffer.pop(key, None)
-                msg = f"[CQ:at,qq={user_id}] {comfort_msg}"
-                await bot.send_group_msg(group_id=event.group_id, message=msg)
-                logger.info(
-                    f"[安慰·高危] 群:{event.group_id} 用户:{user_id} | "
-                    f"原文:{text[:30]}"
-                )
-            return
-
-        # ---- 未检测到负面情绪 → 清空该用户缓冲 ----
-        if not has_emotion:
-            if key in _emotion_buffer:
-                del _emotion_buffer[key]
-                logger.debug(
-                    f"[安慰] 群:{event.group_id} 用户:{user_id} "
-                    f"发送非负面消息 → 缓冲清零"
-                )
-            return
-
-        # ---- 检测到负面情绪 → 加入缓冲 ----
-        if key not in _emotion_buffer:
-            _emotion_buffer[key] = []
-        _emotion_buffer[key].append({
-            "emotion_type": emotion_type,
-            "comfort": result.get("comfort", "").strip(),
-            "ts": now,
-        })
-
-        buffer_count = len(_emotion_buffer[key])
-
-        # 记录每条负面消息
-        logger.info(
-            f"[安慰·缓冲] 群:{event.group_id} 用户:{user_id} | "
-            f"情绪:{emotion_type} | 连续:{buffer_count}/{MIN_NEGATIVE_COUNT} | "
-            f"原文:{text[:30]}"
-        )
-
-        # ---- 连续负面消息数不够 → 暂不触发 ----
-        if buffer_count < MIN_NEGATIVE_COUNT:
-            return
-
-        # ---- 达标 → 触发安慰 ----
-        # 取缓冲区中最近一条的 comfort 内容，并在删除前捕获情结链
-        buffer_entries = _emotion_buffer[key]
-        comfort_msg = buffer_entries[-1]["comfort"]
-        if not comfort_msg:
-            return
-
-        # 删除前捕获情结类型链用于日志
-        emotion_chain = [e["emotion_type"] for e in buffer_entries]
-
-        _cooldown[cooldown_key] = now
-        # 触发后清空缓冲，避免连续刷屏
-        del _emotion_buffer[key]
-
-        msg = f"[CQ:at,qq={user_id}] {comfort_msg}"
-        await bot.send_group_msg(group_id=event.group_id, message=msg)
-
-        logger.info(
-            f"[安慰·触发] 群:{event.group_id} 用户:{user_id} | "
-            f"连续{len(emotion_chain)}条负面 | "
-            f"情结链:{' → '.join(emotion_chain)} | "
-            f"原文:{text[:30]}"
-        )
-
-    except Exception:
+    # ---- 调用 AI 检测情绪（统一 LLM 封装，失败返回 None）----
+    result = await chat_json(EMOTION_SYSTEM_PROMPT, text, temperature=0.3)
+    if result is None:
         logger.warning(
             f"[安慰] 检测失败 群:{event.group_id} 用户:{user_id} | "
             f"原文:{text[:30]}"
         )
+        return
+
+    has_emotion = result.get("has_emotion", False)
+    emotion_type = result.get("emotion_type", "")
+
+    # ---- 高危（自残/轻生）单条即触发 ----
+    if has_emotion and emotion_type == "高危":
+        comfort_msg = result.get("comfort", "").strip()
+        if comfort_msg:
+            _cooldown[cooldown_key] = now
+            # 高危触发时清空该用户缓冲，避免重复触发
+            _emotion_buffer.pop(key, None)
+            msg = f"[CQ:at,qq={user_id}] {comfort_msg}"
+            await bot.send_group_msg(group_id=event.group_id, message=msg)
+            logger.info(
+                f"[安慰·高危] 群:{event.group_id} 用户:{user_id} | "
+                f"原文:{text[:30]}"
+            )
+        return
+
+    # ---- 未检测到负面情绪 → 清空该用户缓冲 ----
+    if not has_emotion:
+        if key in _emotion_buffer:
+            del _emotion_buffer[key]
+            logger.debug(
+                f"[安慰] 群:{event.group_id} 用户:{user_id} "
+                f"发送非负面消息 → 缓冲清零"
+            )
+        return
+
+    # ---- 检测到负面情绪 → 加入缓冲 ----
+    if key not in _emotion_buffer:
+        _emotion_buffer[key] = []
+    _emotion_buffer[key].append({
+        "emotion_type": emotion_type,
+        "comfort": result.get("comfort", "").strip(),
+        "ts": now,
+    })
+
+    buffer_count = len(_emotion_buffer[key])
+
+    # 记录每条负面消息
+    logger.info(
+        f"[安慰·缓冲] 群:{event.group_id} 用户:{user_id} | "
+        f"情绪:{emotion_type} | 连续:{buffer_count}/{MIN_NEGATIVE_COUNT} | "
+        f"原文:{text[:30]}"
+    )
+
+    # ---- 连续负面消息数不够 → 暂不触发 ----
+    if buffer_count < MIN_NEGATIVE_COUNT:
+        return
+
+    # ---- 达标 → 触发安慰 ----
+    # 取缓冲区中最近一条的 comfort 内容，并在删除前捕获情结链
+    buffer_entries = _emotion_buffer[key]
+    comfort_msg = buffer_entries[-1]["comfort"]
+    if not comfort_msg:
+        return
+
+    # 删除前捕获情结类型链用于日志
+    emotion_chain = [e["emotion_type"] for e in buffer_entries]
+
+    _cooldown[cooldown_key] = now
+    # 触发后清空缓冲，避免连续刷屏
+    del _emotion_buffer[key]
+
+    msg = f"[CQ:at,qq={user_id}] {comfort_msg}"
+    await bot.send_group_msg(group_id=event.group_id, message=msg)
+
+    logger.info(
+        f"[安慰·触发] 群:{event.group_id} 用户:{user_id} | "
+        f"连续{len(emotion_chain)}条负面 | "
+        f"情结链:{' → '.join(emotion_chain)} | "
+        f"原文:{text[:30]}"
+    )

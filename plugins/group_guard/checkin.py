@@ -8,43 +8,28 @@
 - /签到排行 — 连续签到排行榜
 """
 
-import json
 import random
 import re
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from nonebot import on_command, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
+
+from .store import JsonStore
 
 
 # ============================================================
 # 持久化存储
 # ============================================================
-DATA_DIR = Path(__file__).parent / "data"
-DATA_FILE = DATA_DIR / "checkin.json"
+DATA_FILE = "checkin.json"
 
 
-class CheckinStorage:
+class CheckinStorage(JsonStore):
     """签到记录存储"""
 
     def __init__(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        self._data: dict = self._load()
-
-    def _load(self) -> dict:
-        if DATA_FILE.exists():
-            try:
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                return {}
-        return {}
-
-    def _save(self):
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=2)
+        super().__init__(DATA_FILE)
 
     def _ensure_group(self, group_id: str):
         """确保群数据结构存在"""
@@ -80,7 +65,7 @@ class CheckinStorage:
 
         record["last_date"] = today
         record["total"] += 1
-        self._save()
+        self.save()
 
         return (record["streak"], record["total"], True)
 
