@@ -13,6 +13,8 @@ from nonebot.adapters.onebot.v11 import (
 from nonebot.rule import Rule
 
 import re
+import random
+import asyncio
 from .checker import CheckResult
 from .punisher import get_punisher
 from .ai_checker import get_ai_checker
@@ -161,6 +163,11 @@ group_guard = on_message(
 )
 
 
+async def _human_delay():
+    """随机短暂延迟，避免回复过快被QQ识别为机器人"""
+    await asyncio.sleep(random.uniform(0.3, 1.5))
+
+
 @group_guard.handle()
 async def handle_group_message(bot: Bot, event: GroupMessageEvent):
     """处理群消息 — 关键词预检 + AI 语义判断"""
@@ -172,6 +179,7 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
     if image_result:
         punisher = get_punisher()
         punish_result = await punisher.execute(bot, event, image_result)
+        await _human_delay()
         await bot.send_group_msg(
             group_id=event.group_id,
             message=punish_result.message,
@@ -211,6 +219,7 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
 
             punisher = get_punisher()
             punish_result = await punisher.execute(bot, event, result)
+            await _human_delay()
             await bot.send_group_msg(
                 group_id=event.group_id,
                 message=punish_result.message,
@@ -272,6 +281,7 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
     punisher = get_punisher()
     punish_result = await punisher.execute(bot, event, result)
 
+    await _human_delay()
     await bot.send_group_msg(
         group_id=event.group_id,
         message=punish_result.message,
