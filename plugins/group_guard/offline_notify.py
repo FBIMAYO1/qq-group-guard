@@ -1,14 +1,19 @@
 """
-掉线通知 + 自动恢复模块
+掉线通知 + 自动恢复 + 会话清理模块
 
 区分两类掉线：
-  - 致命掉线（登录失效/token 过期）→ 通知超管扫码，不自动重连
+  - 致命掉线（登录失效/token 过期）→ 清除 QQ 会话数据 + 重启 NapCat + 通知扫码
   - 临时掉线（网络波动/服务重启）→ 指数退避自动重连
 
 恢复确认：用 get_status（查 QQ 内核运行时状态）而非 get_login_info（缓存值）
 """
 
 import asyncio
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
 from nonebot import on_notice, get_driver, get_bots, logger
 from nonebot.adapters.onebot.v11 import Bot, NoticeEvent
 from nonebot.rule import Rule
@@ -23,6 +28,14 @@ RECONNECT_MAX_DELAY = 300         # 最大重连延迟（秒，5分钟）
 HEARTBEAT_INTERVAL = 30           # 心跳检测间隔（秒）
 HEARTBEAT_TIMEOUT = 10            # 心跳 API 调用超时（秒）
 
+# 致命掉线后自动清除会话 + 重启 NapCat
+AUTO_CLEAR_ON_FATAL = True        # 致命掉线自动清除会话
+NAPCAT_DIR = Path("D:/桌面/NapCat/NapCat.44498.Shell")
+NAPCAT_RESTART_DELAY = 3          # 杀进程后等几秒再启动
+
+# QQ 会话数据目录（登录态存储位置）
+QQ_DATA_DIR = Path(os.environ.get("APPDATA", "")) / "QQ"
+
 # 致命掉线关键字 — 匹配到则跳过自动重连（必须扫码）
 FATAL_OFFLINE_KEYWORDS = [
     "登录已失效", "登录失效", "token过期", "token 过期",
@@ -33,7 +46,170 @@ FATAL_OFFLINE_KEYWORDS = [
 # 重连状态
 _reconnect_lock = asyncio.Lock()
 _bot_was_offline = False
-_fatal_offline = False            # 是否致命掉线（需扫码）
+_fatal_offline = False
+
+
+# ============================================================
+# NapCat 会话清理
+# ============================================================
+def _clear_qq_session():
+    """清除 QQ 登录会话数据（同步，在线程池执行）
+
+    删除的目录：
+      - %APPDATA%/QQ/Partitions/  (登录分区，核心)
+      - %APPDATA%/QQ/auth/        (加密的登录凭据)
+      - %APPDATA%/QQ/blob_storage/
+      - NapCat cache/
+
+    不清除：
+      - NapCat 配置文件 (onebot11_*.json, napcat*.json) — 保留 WebSocket 配置
+      - QQ 程序文件
+    """
+    cleared = []
+    failed = []
+
+    # ---- QQ 会话数据 ----
+    qq_targets = [
+        QQ_DATA_DIR / "Partitions",
+        QQ_DATA_DIR / "auth",
+        QQ_DATA_DIR / "blob_storage",
+        QQ_DATA_DIR / "arks",
+        QQ_DATA_DIR / "Cache",
+        QQ_DATA_DIR / "Code Cache",
+        QQ_DATA_DIR / "Local Storage",
+        QQ_DATA_DIR / "Network",
+        QQ_DATA_DIR / "Shared Dictionary",
+        QQ_DATA_DIR / "dynamic_module",
+        QQ_DATA_DIR / "dynamic_package",
+        QQ_DATA_DIR / "qqex",
+    ]
+
+    for target in qq_targets:
+        if target.exists():
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+                cleared.append(str(target))
+            except Exception as e:
+                failed.append(f"{target}: {e}")
+
+    # ---- 清理残留的数据库文件 ----
+    for f in QQ_DATA_DIR.glob("*.db*"):
+        try:
+            f.unlink()
+            cleared.append(str(f))
+        except Exception as e:
+            failed.append(f"{f}: {e}")
+    for f in QQ_DATA_DIR.glob("SharedStorage*"):
+        try:
+            f.unlink()
+            cleared.append(str(f))
+        except Exception as e:
+            failed.append(f"{f}: {e}")
+
+    # ---- NapCat 缓存 ----
+    napcat_cache = NAPCAT_DIR / "versions" / "9.9.26-44498" / "resources" / "app" / "napcat" / "cache"
+    if napcat_cache.exists():
+        try:
+            shutil.rmtree(napcat_cache)
+            cleared.append(str(napcat_cache))
+        except Exception as e:
+            failed.append(f"{napcat_cache}: {e}")
+
+    # ---- NapCat 日志（可选，太大了清一下）----
+    napcat_logs = NAPCAT_DIR / "versions" / "9.9.26-44498" / "resources" / "app" / "napcat" / "logs"
+    if napcat_logs.exists():
+        try:
+            for log_file in napcat_logs.glob("*.log"):
+                try:
+                    log_file.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # ---- QQ 日志 ----
+    qq_logs = QQ_DATA_DIR / "log"
+    if qq_logs.exists():
+        try:
+            shutil.rmtree(qq_logs)
+            cleared.append(str(qq_logs))
+        except Exception as e:
+            failed.append(f"{qq_logs}: {e}")
+
+    return cleared, failed
+
+
+def _kill_qq_processes():
+    """杀掉所有 QQ 和 NapCat 相关进程"""
+    killed = []
+    for proc_name in ["QQ.exe", "NapCatWinBootMain.exe", "NapCatWinBootHook.dll"]:
+        try:
+            # /f = force, /im = image name
+            result = subprocess.run(
+                ["taskkill", "/f", "/im", proc_name],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                killed.append(proc_name)
+        except Exception:
+            pass
+    return killed
+
+
+def _restart_napcat():
+    """异步重启 NapCat（非阻塞）"""
+    napcat_bat = NAPCAT_DIR / "napcat.bat"
+    if not napcat_bat.exists():
+        logger.error(f"[掉线通知] ❌ 找不到 NapCat 启动脚本: {napcat_bat}")
+        return False
+
+    try:
+        # 用 cmd 启动 bat，后台运行不等待
+        subprocess.Popen(
+            f'start "" "{napcat_bat}"',
+            shell=True,
+            cwd=str(NAPCAT_DIR),
+            creationflags=subprocess.CREATE_NEW_CONSOLE
+            if os.name == "nt" else 0,
+        )
+        logger.info(f"[掉线通知] 🔄 NapCat 启动中... ({napcat_bat})")
+        return True
+    except Exception as e:
+        logger.error(f"[掉线通知] ❌ 启动 NapCat 失败: {e}")
+        return False
+
+
+async def _auto_clear_and_restart():
+    """致命掉线后：杀进程 → 清会话 → 重启 NapCat（在线程池执行 IO 操作）"""
+    loop = asyncio.get_running_loop()
+    logger.info("[掉线通知] 🧹 开始自动清除 QQ 会话数据...")
+
+    # 1. 杀进程
+    killed = await loop.run_in_executor(None, _kill_qq_processes)
+    logger.info(f"[掉线通知] 🔪 已终止进程: {killed}")
+
+    # 2. 等进程完全退出
+    await asyncio.sleep(1)
+
+    # 3. 清数据
+    cleared, failed = await loop.run_in_executor(None, _clear_qq_session)
+    for path in cleared:
+        logger.info(f"[掉线通知] 🗑️ 已清除: {path}")
+    for err in failed:
+        logger.warning(f"[掉线通知] ⚠️ 清除失败: {err}")
+
+    # 4. 等一会再启动
+    await asyncio.sleep(NAPCAT_RESTART_DELAY)
+
+    # 5. 重启 NapCat
+    ok = await loop.run_in_executor(None, _restart_napcat)
+    if ok:
+        logger.info("[掉线通知] ✅ NapCat 已重新启动，等待扫码...")
+    else:
+        logger.error("[掉线通知] ❌ NapCat 重启失败，请手动启动")
 
 
 # ============================================================
@@ -49,12 +225,7 @@ def _is_fatal_offline(reason: str) -> bool:
 
 
 async def _check_bot_really_online(bot: Bot) -> bool:
-    """真实连通性检查 — 调 get_status 查 QQ 内核运行时状态
-
-    get_status 返回示例: {"online": true, "good": true, ...}
-    只有 QQ 内核真正在线时才返回 online=true。
-    对比 get_login_info 只是读 NapCat 本地缓存，QQ 死了也能返回。
-    """
+    """真实连通性检查 — 调 get_status 查 QQ 内核运行时状态"""
     try:
         status = await asyncio.wait_for(
             bot.call_api("get_status"),
@@ -97,7 +268,6 @@ async def _is_bot_offline(event: NoticeEvent) -> bool:
 
 
 async def _is_bot_online(event: NoticeEvent) -> bool:
-    """bot 重新上线事件（扫码成功后会触发）"""
     return event.notice_type == "bot_online"
 
 
@@ -113,12 +283,11 @@ bot_offline = on_notice(
 
 @bot_offline.handle()
 async def _handle_bot_offline(bot: Bot, event: NoticeEvent):
-    """机器人掉线时通知 + 按原因决定是否自动重连"""
+    """机器人掉线时通知 + 按原因决定处理策略"""
 
     global _bot_was_offline, _fatal_offline
     _bot_was_offline = True
 
-    # 获取掉线原因
     tag = getattr(event, "tag", "未知原因")
     message = getattr(event, "message", "")
     reason = message or tag
@@ -129,17 +298,23 @@ async def _handle_bot_offline(bot: Bot, event: NoticeEvent):
     logger.error(f"[掉线通知] ⚠️ Bot 已离线！原因: {reason} | 致命={fatal}")
 
     if fatal:
-        # ---- 致命掉线：不自动重连，直接通知超管扫码 ----
+        # ---- 致命掉线：清数据 + 重启 NapCat + 通知扫码 ----
         notify_msg = (
-            f"⚠️ 狗三掉线 — 需要重新扫码\n\n"
+            f"⚠️ 狗三掉线 — 正在自动重置登录环境\n\n"
             f"原因: {reason}\n\n"
-            f"此类掉线无法自动恢复，请立即扫码：\n"
-            f"1. 打开 NapCat WebUI: http://127.0.0.1:6099\n"
-            f"2. 点击「重新登录」扫码\n"
-            f"3. 扫码成功后 Bot 会自动恢复并通知你"
+            f"已自动执行：\n"
+            f"1. 终止 QQ / NapCat 进程\n"
+            f"2. 清除过期登录会话数据\n"
+            f"3. 重启 NapCat\n\n"
+            f"请在 NapCat WebUI 重新扫码：\n"
+            f"http://127.0.0.1:6099"
         )
         await _notify_superusers(bot, notify_msg)
-        logger.info("[掉线通知] 🛑 致命掉线，跳过自动重连，等待扫码...")
+
+        if AUTO_CLEAR_ON_FATAL:
+            asyncio.create_task(_auto_clear_and_restart())
+        else:
+            logger.info("[掉线通知] 🛑 致命掉线，自动清除已禁用，等待手动扫码...")
     else:
         # ---- 临时掉线：通知 + 自动重连 ----
         notify_msg = (
@@ -152,7 +327,7 @@ async def _handle_bot_offline(bot: Bot, event: NoticeEvent):
 
 
 # ============================================================
-# 重新上线监听器 — 扫码成功 / 自动重连成功后触发
+# 重新上线监听器 — 扫码 / 自动重连成功后触发
 # ============================================================
 bot_online = on_notice(
     rule=Rule(_is_bot_online),
@@ -167,7 +342,6 @@ async def _handle_bot_online(bot: Bot, event: NoticeEvent):
 
     global _bot_was_offline, _fatal_offline
 
-    # 验证真实在线（不是假恢复）
     really_online = await _check_bot_really_online(bot)
     if not really_online:
         logger.warning("[掉线通知] ⚠️ 收到 bot_online 但 get_status 返回不在线，忽略")
@@ -208,15 +382,12 @@ async def _auto_reconnect_with_backoff():
         logger.info("[掉线通知] 🔄 开始自动重连...")
 
         for attempt in range(1, RECONNECT_MAX_ATTEMPTS + 1):
-            # 指数退避：5s → 10s → 20s → ... → 300s cap
             delay = min(RECONNECT_BASE_DELAY * (2 ** (attempt - 1)), RECONNECT_MAX_DELAY)
             logger.info(
-                f"[掉线通知] ⏳ 第 {attempt}/{RECONNECT_MAX_ATTEMPTS} 次重连，"
-                f"等待 {delay}s..."
+                f"[掉线通知] ⏳ 第 {attempt}/{RECONNECT_MAX_ATTEMPTS} 次重连，等待 {delay}s..."
             )
             await asyncio.sleep(delay)
 
-            # 如果中途变成致命掉线 → 放弃
             if _fatal_offline:
                 logger.info("[掉线通知] 🛑 检测到致命掉线，放弃自动重连")
                 return
@@ -229,26 +400,20 @@ async def _auto_reconnect_with_backoff():
 
                 bot = list(bots.values())[0]
 
-                # ===== 用 get_status 做真实检测（非缓存）=====
                 if await _check_bot_really_online(bot):
                     _bot_was_offline = False
                     login_info = await _get_login_info_safe(bot)
                     nickname = login_info.get("nickname", "狗三")
                     logger.info(
-                        f"[掉线通知] ✅ {nickname} 已恢复在线！"
-                        f"（第 {attempt} 次重连成功）"
+                        f"[掉线通知] ✅ {nickname} 已恢复在线！（第 {attempt} 次重连成功）"
                     )
-                    # 恢复通知由 bot_online handler 统一发送
                     return
                 else:
-                    logger.warning(
-                        f"[掉线通知] ⚠️ 第 {attempt} 次 — get_status 返回不在线"
-                    )
+                    logger.warning(f"[掉线通知] ⚠️ 第 {attempt} 次 — get_status 返回不在线")
 
             except Exception as e:
                 logger.error(f"[掉线通知] 重连检测异常: {e}")
 
-        # 全部重连失败 → 升级为致命，通知超管扫码
         _fatal_offline = True
         logger.error(
             f"[掉线通知] ❌ {RECONNECT_MAX_ATTEMPTS} 次重连全部失败！"
@@ -286,7 +451,7 @@ async def _notify_reconnect_failed():
 # ============================================================
 async def _heartbeat_watchdog():
     """每 HEARTBEAT_INTERVAL 秒用 get_status 检测 QQ 内核是否在线"""
-    await asyncio.sleep(20)  # 等 NoneBot 完全启动
+    await asyncio.sleep(20)
 
     global _bot_was_offline, _fatal_offline
 
@@ -330,6 +495,5 @@ async def _start_offline_watchdog():
         f"[掉线通知] 🔔 掉线监控已就绪 "
         f"(心跳间隔:{HEARTBEAT_INTERVAL}s, "
         f"最大重连:{RECONNECT_MAX_ATTEMPTS}次, "
-        f"超时:{HEARTBEAT_TIMEOUT}s, "
-        f"致命检测:已启用)"
+        f"自动清除会话:{AUTO_CLEAR_ON_FATAL})"
     )
