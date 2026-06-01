@@ -1,8 +1,8 @@
 # 🐧 狗三 — QQ 群 AI 智能管家
 
-基于 **NoneBot2 + NapCat + DeepSeek AI** 的全能型 QQ 群管理机器人。
+基于 **NoneBot2 + NapCat + DeepSeek + 千问 VL** 的全能型 QQ 群管理机器人。
 
-不只是拦截违规 — 它还**陪你聊天、检测情绪、定时洗脑、推送早报**，是一只活在群里的赛博企鹅。
+不只是拦截违规 — 它还**审图、陪聊、检测情绪、定时洗脑、推送早报、掉线自愈**，是一只活在群里的赛博企鹅。
 
 ---
 
@@ -10,9 +10,10 @@
 
 | 模块 | 说明 |
 |------|------|
-| 🧠 **AI 违规检测** | DeepSeek 大模型语义判断，识破谐音/形近/拼音缩写/拆字等一切变体，7 大类违规全拦截 |
+| 🧠 **AI 违规检测** | 关键词预检 + DeepSeek 大模型语义判断，识破谐音/形近/拼音缩写/拆字等一切变体，7 大类违规全拦截 |
+| 🖼 **图片违禁检测** | 千问 VL 视觉模型审核群图片，色情/血腥/违法/赌博/政治/猎奇六类违禁识别 |
 | ⚖️ **阶梯处罚** | 两次 @警告 → 第三次起禁言等差递增，自动撤回违规消息 |
-| 🐧 **凑企鹅聊天** | @机器人触发，冰冷冷南极胖企鹅人格，每句话带"咕咕嘎嘎!" |
+| 🐧 **凑企鹅聊天** | @机器人触发，冰冷冷南极胖企鹅人格，每句话带"咕咕嘎嘎!"，支持发图识图 |
 | 🎯 **凑企鹅洗脑** | 每日 3 个随机时段，揪出群友追问"你是凑企鹅！"，最多 3 轮循环，承认才能结束 |
 | 💚 **情绪安慰** | 连续负面情绪检测（防误判），自残/轻生高危即时响应，企鹅视角温暖安慰 |
 | 📰 **早安短报** | 每天早上 8:00，自动推送今日热点新闻 + 法定节假日倒计时 |
@@ -23,8 +24,9 @@
 | 🚨 **刷屏检测** | 滑动窗口检测，5 条/10 秒自动禁言 5 分钟 |
 | 🔗 **广告拦截** | 纯正则检测链接/广告关键词/短链/可疑 QQ 号，撤回 + 警告 |
 | 🛡 **机器人防御** | 狗三被骂 → 企鹅道歉，猫三被骂 → @猫三 同事同情，Priority 0 拦截免 AI 误判 |
+| 📡 **掉线自动恢复** | 区分致命/临时掉线：临时掉线指数退避自动重连；致命掉线（登录失效）自动清会话 + 重启 NapCat + 通知扫码 |
 | 🛠 **管理命令** | 23 个管理命令：查询/禁言/踢出/白名单/排行榜/群管开关/禁言开关/功能开关/广播等 |
-| 💾 **持久存储** | 违规记录永久保存，每日自动清零计数，支持违规历史回溯 |
+| 💾 **统一持久层** | 原子写 + 写锁 + 损坏自愈的 JSON 存储，违规记录永久保存，每日自动清零计数 |
 | 🛡 **多层防误判** | 白名单豁免 + 管理层跳过 + AI 自嘲/玩梗/宠物识别 + 连续消息情绪缓冲 |
 | 🌐 **多群管理** | 每群独立配置、独立开关、互不影响；超级用户可跨群管理 |
 
@@ -37,14 +39,27 @@ QQ 服务器 ←→ NapCat（QQNT 协议层）
                  ↕ WebSocket
             NoneBot2（机器人框架）
                  ↕
-            DeepSeek AI（语义判断 / 聊天 / 情绪检测）
+        ┌────────┴────────┐
+   DeepSeek AI         千问 VL 视觉模型
+ （语义判断/聊天/情绪）  （图片违禁审核）
 ```
 
 | 层 | 技术 | 作用 |
 |----|------|------|
 | 协议层 | [NapCat](https://github.com/NapNeko/NapCatQQ) | 对接 QQNT 协议，收发消息 |
 | 框架层 | [NoneBot2](https://nonebot.dev/) | 消息路由、插件管理、事件调度 |
-| AI 层 | [DeepSeek](https://platform.deepseek.com/) | 违规识别、企鹅聊天、情绪检测 |
+| 文本 AI | [DeepSeek](https://platform.deepseek.com/) | 违规识别、企鹅聊天、情绪检测 |
+| 视觉 AI | 千问 VL（DashScope） | 群图片违禁内容审核、识图 |
+
+### 🧱 工程底座（v2.7 架构重构）
+
+| 模块 | 职责 |
+|------|------|
+| `store.py` | 统一 JSON 持久层基类：原子写（temp + `os.replace`）、写锁、损坏自愈（备份不清空）。4 个存储模块共用 |
+| `settings.py` | 集中式运行时配置：`.env` 唯一加载入口、API Key、置信度阈值、NapCat 路径自动探测（版本号免硬编码） |
+| `llm.py` | DeepSeek 调用封装 `chat_text` / `chat_json`：收口建客户端→调用→清洗→兜底样板，基于 `AsyncOpenAI` 不阻塞事件循环 |
+| `persona.py` | 凑企鹅角色事实唯一来源 `PERSONA_CORE`，各场景在其上叠加语气 |
+| `keyword_rules.py` | 关键词预检词库，与主入口解耦 |
 
 ---
 
@@ -60,15 +75,32 @@ QQ 服务器 ←→ NapCat（QQNT 协议层）
 ├── README.md
 └── plugins/
     └── group_guard/
-        ├── __init__.py         # 🔌 主插件 — AI 违规检测入口
+        ├── __init__.py         # 🔌 主插件 — 消息路由 + AI 违规检测入口
+        │
+        ├── ── 工程底座（v2.7）──
+        ├── store.py            # 💾 统一 JSON 持久层基类（原子写 + 写锁 + 损坏自愈）
+        ├── settings.py         # ⚙️  集中式运行时配置（.env 加载 / API Key / 路径探测）
+        ├── llm.py              # 🤖 DeepSeek 调用封装（chat_text / chat_json）
+        ├── persona.py          # 🐧 凑企鹅角色事实唯一来源
+        ├── keyword_rules.py    # 📜 关键词预检词库
+        │
+        ├── ── 配置与生命周期 ──
         ├── config.py           # ⚙️  插件配置（兼容层，逐步废弃）
         ├── group_config.py     # 🌐 多群管理核心 — 每群独立配置持久化
         ├── group_lifecycle.py  # 🔄 群生命周期 — 入群/退群/启动同步
+        │
+        ├── ── 检测与处罚 ──
         ├── ai_checker.py       # 🧠 DeepSeek AI 违规检测器
+        ├── image_checker.py    # 🖼 千问 VL 图片违禁检测
         ├── punisher.py         # ⚖️  阶梯处罚执行器
-        ├── storage.py          # 💾 违规记录 JSON 持久化
-        ├── admin_cmd.py        # 🛠  23 个管理命令（含多群管理）
-        ├── penguin_chat.py     # 🐧 @机器人 凑企鹅聊天
+        ├── storage.py          # 💾 违规记录持久化
+        ├── checker.py          # 📦 CheckResult 数据结构
+        ├── spam_detector.py    # 🚨 刷屏检测与自动禁言
+        ├── ad_detector.py      # 🔗 广告/链接检测拦截
+        ├── bot_defense.py      # 🛡 机器人防御 + 猫三同事互动
+        │
+        ├── ── 互动与陪伴 ──
+        ├── penguin_chat.py     # 🐧 @机器人 凑企鹅聊天 + 识图
         ├── brainwash.py        # 🎯 凑企鹅洗脑（每日随机）
         ├── comfort.py          # 💚 负面情绪检测与安慰
         ├── morning_brief.py    # 📰 早安短报 + 节假日倒计时
@@ -76,13 +108,16 @@ QQ 服务器 ←→ NapCat（QQNT 协议层）
         ├── fortune.py          # 🔮 每日运势抽签
         ├── welcome.py          # 👋 入群欢迎通知
         ├── activity_rank.py    # 📊 群活跃排行榜
-        ├── spam_detector.py    # 🚨 刷屏检测与自动禁言
-        ├── ad_detector.py      # 🔗 广告/链接检测拦截
-        ├── bot_defense.py      # 🛡 机器人防御 + 猫三同事互动
-        ├── checker.py          # 📦 CheckResult 数据结构
-        ├── rules.py            # 📜 关键词库（供 AI prompt 参考，运行时未启用）
+        ├── admin_cmd.py        # 🛠  23 个管理命令（含多群管理）
+        │
+        ├── ── 运维 ──
+        ├── offline_notify.py   # 📡 掉线自动恢复（重连 / 清会话 / 重启 NapCat）
+        ├── rules.py            # 📜 关键词库（备用，运行时未启用）
         └── data/
-            └── violations.json # 违规记录数据（自动生成）
+            ├── violations.json    # 违规记录
+            ├── group_config.json  # 多群配置
+            ├── checkin.json       # 签到数据
+            └── activity.json      # 活跃统计
 ```
 
 ---
@@ -95,6 +130,7 @@ QQ 服务器 ←→ NapCat（QQNT 协议层）
 - Windows / Linux / macOS
 - 一个 QQ 小号（作为机器人）
 - DeepSeek API Key（[免费获取](https://platform.deepseek.com/)）
+- （可选）DashScope API Key — 启用图片违禁检测（[阿里云百炼](https://dashscope.console.aliyun.com/)）
 
 ### 2. 安装依赖
 
@@ -120,7 +156,17 @@ PORT=8080
 SUPERUSERS=["你的QQ号"]
 COMMAND_START=["/", "！", "!"]
 ONEBOT_WS_URLS=["ws://127.0.0.1:3001"]
+
+# 文本 AI（必填）— 违规检测 / 企鹅聊天 / 情绪安慰
 DEEPSEEK_API_KEY=你的DeepSeek_Key
+
+# 以下均为可选项 —— 不填则用默认值
+# 视觉模型 Key — 启用图片违禁检测时需要（千问 VL / DashScope）
+DASHSCOPE_API_KEY=你的DashScope_Key
+# NapCat 安装目录 — 掉线自动重启用，不填用默认路径，版本号会自动探测
+NAPCAT_DIR=D:/桌面/NapCat/NapCat.44498.Shell
+# 违规判定置信度阈值 — 核心旋钮，越高越保守（默认 0.85）
+GUARD_CONFIDENCE=0.85
 ```
 
 ### 5. 启动
@@ -386,6 +432,40 @@ Priority 0 最高优先级拦截，在 AI 违规检测之前处理，**block=Tru
 
 ---
 
+## 🖼 图片违禁检测
+
+纯图片消息（无文本）到达时，提取图片交给千问 VL 视觉模型审核。默认关闭，需配置 `DASHSCOPE_API_KEY` 并在群内开启。
+
+| 特性 | 说明 |
+|------|------|
+| 触发方式 | 群内出现图片消息，自动审核 |
+| 审核类别 | 色情擦边 / 血腥暴力 / 违法（毒品枪支）/ 赌博诈骗 / 政治敏感 / 恶心猎奇 |
+| 处罚 | 命中后走统一 Punisher 流程（@警告 / 禁言 + 撤回） |
+| 性能 | URL 结果缓存 + 全局 1 次/秒限流，避免重复调用 |
+| 默认 | 默认关闭（`/功能开关 图片检测 开` 启用） |
+
+---
+
+## 📡 掉线自动恢复
+
+机器人掉线时区分两类原因，分别处理：
+
+| 类型 | 判定 | 处理 |
+|------|------|------|
+| **临时掉线** | 网络波动 / 服务重启 | 指数退避自动重连（5s→10s→…→300s，最多 10 次），用 `get_status` 查 QQ 内核真实状态确认恢复 |
+| **致命掉线** | 登录失效 / token 过期 / 设备锁等 | 重连无意义 → 自动 kill QQ+NapCat 进程 → 清除过期会话数据 → 重启 NapCat → 私聊超管去扫码 |
+
+| 特性 | 说明 |
+|------|------|
+| 真实检测 | 用 `get_status` 查 QQ 内核运行时状态，而非 `get_login_info` 缓存值，避免假恢复 |
+| 心跳看门狗 | 每 30 秒主动检测一次连通性 |
+| 路径自适应 | NapCat 目录从 `settings` 读取，版本号目录自动探测，换机器 / 升级版本不会静默失败 |
+| 通知 | 掉线、恢复、扫码成功均私聊通知超级用户 |
+
+> ⚠️ 致命掉线本质是 QQ 服务器主动踢线（检测到非官方客户端）。降低被踢概率最有效的办法是**用手机 QQ 协议挂机做主登录**，让 NapCat 仅作协议桥。
+
+---
+
 所有命令以 `/`、`！` 或 `!` 开头，**仅群主/管理员可用**。
 
 ### 📊 记录查询
@@ -449,13 +529,22 @@ Priority 0 最高优先级拦截，在 AI 违规检测之前处理，**block=Tru
 
 编辑 `plugins/group_guard/ai_checker.py` 中的 `SYSTEM_PROMPT`。
 
+### 调整违规判定松紧
+
+在 `.env` 设置 `GUARD_CONFIDENCE`（默认 0.85）。调高 → 更保守、更少误杀；调低 → 更敏感、更少漏判。
+
 ### 修改处罚规则
 
 编辑 `plugins/group_guard/punisher.py` 中的 `calculate_punishment` 方法。
 
 ### 修改企鹅人格
 
-编辑 `plugins/group_guard/penguin_chat.py` 中的 `PENGUIN_SYSTEM_PROMPT`。
+角色基础设定在 `plugins/group_guard/persona.py` 的 `PERSONA_CORE`（一处改，全场景生效）。
+各场景语气：聊天在 `penguin_chat.py` 的 `PENGUIN_SYSTEM_PROMPT`，安慰在 `comfort.py` 的 `EMOTION_SYSTEM_PROMPT`。
+
+### 修改关键词预检词库
+
+编辑 `plugins/group_guard/keyword_rules.py` 中的 `KEYWORD_VIOLATIONS`（AI 调用前的快速命中表）。
 
 ### 修改情绪检测敏感度
 
