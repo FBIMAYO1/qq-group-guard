@@ -254,7 +254,7 @@ async def handle_group_message(bot: Bot, event: GroupMessageEvent):
     if not ai_checker.is_available():
         return
 
-    ai_result = ai_checker.check(text)
+    ai_result = await ai_checker.check(text)
 
     if not ai_result.is_violation:
         return

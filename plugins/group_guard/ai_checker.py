@@ -13,7 +13,7 @@ import time
 import re
 from pathlib import Path
 from dataclasses import dataclass
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from .checker import CheckResult
 
@@ -393,7 +393,7 @@ class DeepSeekChecker:
             self.client = None
             print("[AI检测] ⚠️ 未配置 DEEPSEEK_API_KEY，AI 检测不可用")
             return
-        self.client = OpenAI(
+        self.client = AsyncOpenAI(
             api_key=API_KEY,
             base_url=DEEPSEEK_BASE_URL,
         )
@@ -403,9 +403,9 @@ class DeepSeekChecker:
         """检查 AI 检测是否可用"""
         return self.client is not None
 
-    def check(self, text: str) -> AiCheckResult:
+    async def check(self, text: str) -> AiCheckResult:
         """
-        使用 AI 判断消息是否违规
+        使用 AI 判断消息是否违规（异步，不阻塞事件循环）
 
         Args:
             text: 要检查的消息文本
@@ -425,7 +425,7 @@ class DeepSeekChecker:
         start = time.time()
 
         try:
-            response = self.client.chat.completions.create(
+            response = await self.client.chat.completions.create(
                 model=DEEPSEEK_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -517,17 +517,17 @@ def _extract_json_from_raw(raw: str) -> str:
     return cleaned
 
 
-def get_openai_client() -> OpenAI | None:
-    """获取共享的 OpenAI 客户端单例"""
+def get_openai_client() -> AsyncOpenAI | None:
+    """获取共享的 AsyncOpenAI 客户端单例（异步，不阻塞事件循环）"""
     global _openai_client
     if _openai_client is None and API_KEY:
-        _openai_client = OpenAI(api_key=API_KEY, base_url=DEEPSEEK_BASE_URL)
+        _openai_client = AsyncOpenAI(api_key=API_KEY, base_url=DEEPSEEK_BASE_URL)
     return _openai_client
 
 
 # 全局单例
 _checker: DeepSeekChecker | None = None
-_openai_client: OpenAI | None = None
+_openai_client: AsyncOpenAI | None = None
 
 
 def get_ai_checker() -> DeepSeekChecker:

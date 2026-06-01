@@ -174,7 +174,7 @@ async def handle_emotion(bot: Bot, event: GroupMessageEvent):
         return
 
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[
                 {"role": "system", "content": EMOTION_SYSTEM_PROMPT},

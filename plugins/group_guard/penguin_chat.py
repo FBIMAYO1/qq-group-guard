@@ -10,7 +10,6 @@ import time
 from nonebot import on_message, logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent
 from nonebot.rule import Rule
-from openai import OpenAI
 
 from .ai_checker import API_KEY, DEEPSEEK_MODEL, get_openai_client
 from .group_config import get_group_config
@@ -235,7 +234,7 @@ async def _handle_image_description(
             f"回复1-2句话即可。"
         )
 
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[
                 {"role": "system", "content": PENGUIN_SYSTEM_PROMPT},
@@ -323,7 +322,7 @@ async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
         client = get_openai_client()
         if not client:
             return
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[
                 {"role": "system", "content": PENGUIN_SYSTEM_PROMPT},
