@@ -11,6 +11,7 @@
   DASHSCOPE_API_KEY    视觉模型 API Key（图片审核）
   NAPCAT_DIR           NapCat 安装目录（掉线自动重启用）
   GUARD_CONFIDENCE     违规判定置信度阈值，默认 0.85
+  MOYUREN_API_URL      摸鱼人日历 API 地址（每日播报取图），默认作者公开 API
 """
 
 import os
@@ -57,6 +58,15 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 # 违规判定置信度阈值 — 核心旋钮（误杀 vs 漏判）。低于此值一律判安全。
 GUARD_CONFIDENCE_THRESHOLD = float(os.getenv("GUARD_CONFIDENCE", "0.85"))
+
+
+# ============================================================
+# 摸鱼人日历（每日播报取图）
+# ============================================================
+# moyuren_server 公开 API；想自建服务时改 .env 里的 MOYUREN_API_URL 即可
+MOYUREN_API_URL = os.getenv(
+    "MOYUREN_API_URL", "https://api.monkeyray.net/api/v1/moyuren"
+)
 
 
 # ============================================================

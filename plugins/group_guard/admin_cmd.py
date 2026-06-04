@@ -138,19 +138,19 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
         "  /群管开关 — 启用/停用AI检测（本群）\n"
         "  /禁言开关 — 开启/关闭自动禁言（本群）\n"
         "  /功能开关 [名称] [开/关]\n"
-        "    可选：入群欢迎 | 早安短报 | 洗脑 | 情绪安慰 | 企鹅聊天\n"
+        "    可选：入群欢迎 | 摸鱼日历 | 洗脑 | 情绪安慰 | 企鹅聊天\n"
         "    　　　刷屏检测 | 广告拦截 | 图片检测\n"
         "  /全员警告 文字 — @all发通知\n"
         "  /群列表 — 查看所有群状态（🔑超级用户）\n"
         "  /全局默认 — 管理新群默认配置（🔑超级用户）\n"
         "  /广播 — 向所有群发公告（🔑超级用户）\n\n"
-        "📰 早报\n"
-        "  /早报 — 手动获取当天早报 + 新闻\n\n"
+        "📅 摸鱼日历\n"
+        "  /摸鱼日历 — 获取今日摸鱼人日历（图片+一言+周末倒计时）\n\n"
         "🐧 企鹅聊天\n"
         "  /企鹅冷却 [秒] — 查看/修改@机器人回答间隔（🔑超级用户）\n\n"
         "🛡 自动防护（无需操作）\n"
         "  AI违规检测 | 情绪安慰 | 广告拦截\n"
-        "  刷屏检测 | 入群欢迎 | 早安短报\n"
+        "  刷屏检测 | 入群欢迎 | 摸鱼日历\n"
         "  图片检测 | 随机洗脑 | 狗三道歉\n"
         "  猫三豁免（骂机器人不判违规）\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -612,7 +612,7 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
     # 功能开关状态简表
     feature_status = "\n".join([
         f"  入群欢迎：{'✅' if config.welcome_enabled else '❌'} | "
-        f"早安短报：{'✅' if config.morning_brief_enabled else '❌'}",
+        f"摸鱼日历：{'✅' if config.morning_brief_enabled else '❌'}",
         f"  企鹅聊天：{'✅' if config.penguin_chat_enabled else '❌'} | "
         f"情绪安慰：{'✅' if config.comfort_enabled else '❌'}",
         f"  洗脑游戏：{'✅' if config.brainwash_enabled else '❌'} | "
@@ -644,7 +644,8 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
 
 FEATURE_MAP = {
     "入群欢迎": "welcome_enabled",
-    "早安短报": "morning_brief_enabled",
+    "摸鱼日历": "morning_brief_enabled",
+    "早安短报": "morning_brief_enabled",  # 旧名兼容
     "洗脑": "brainwash_enabled",
     "情绪安慰": "comfort_enabled",
     "企鹅聊天": "penguin_chat_enabled",
@@ -655,7 +656,7 @@ FEATURE_MAP = {
 
 FEATURE_LABELS = {
     "welcome_enabled": "入群欢迎",
-    "morning_brief_enabled": "早安短报",
+    "morning_brief_enabled": "摸鱼日历",
     "brainwash_enabled": "洗脑",
     "comfort_enabled": "情绪安慰",
     "penguin_chat_enabled": "企鹅聊天",
@@ -760,7 +761,8 @@ DEFAULT_MAP = {
     "禁言开关": "default_mute_enabled",
     "群管开关": "default_guard_enabled",
     "入群欢迎": "default_welcome_enabled",
-    "早安短报": "default_morning_brief_enabled",
+    "摸鱼日历": "default_morning_brief_enabled",
+    "早安短报": "default_morning_brief_enabled",  # 旧名兼容
     "洗脑": "default_brainwash_enabled",
     "情绪安慰": "default_comfort_enabled",
     "企鹅聊天": "default_penguin_chat_enabled",
@@ -773,7 +775,7 @@ DEFAULT_LABELS = {
     "default_guard_enabled": "AI违规检测",
     "default_mute_enabled": "自动禁言",
     "default_welcome_enabled": "入群欢迎",
-    "default_morning_brief_enabled": "早安短报",
+    "default_morning_brief_enabled": "摸鱼日历",
     "default_brainwash_enabled": "洗脑",
     "default_comfort_enabled": "情绪安慰",
     "default_penguin_chat_enabled": "企鹅聊天",
@@ -842,18 +844,21 @@ async def handle_global_default(bot: Bot, event: GroupMessageEvent):
 
 
 # ============================================================
-# /早报 — 手动获取当天早报（管理员可用）
+# /摸鱼日历 — 手动获取当天摸鱼人日历（管理员可用）
 # ============================================================
 
-brief_cmd = on_command("早报", aliases={"早间新闻", "今日新闻"}, priority=5, rule=is_admin, block=True)
+brief_cmd = on_command("摸鱼日历", aliases={"日历", "早报", "摸鱼", "早间新闻"}, priority=5, rule=is_admin, block=True)
 
 
 @brief_cmd.handle()
 async def handle_brief(bot: Bot, event: GroupMessageEvent):
-    """手动触发早报"""
-    from . import morning_brief
-    brief = await morning_brief.get_brief()
-    await brief_cmd.finish(brief)
+    """手动触发摸鱼日历"""
+    from . import moyuren
+    msg = await moyuren.get_moyuren_message()
+    if msg is None:
+        await brief_cmd.finish("❌ 摸鱼日历获取失败，稍后再试")
+        return
+    await brief_cmd.finish(msg)
 
 
 # ============================================================
