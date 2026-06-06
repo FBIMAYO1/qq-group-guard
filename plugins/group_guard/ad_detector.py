@@ -1,11 +1,7 @@
 """
-广告/链接检测模块
+广告检测模块
 
-纯正则检测，不消耗 AI token。检测以下内容：
-- 外部链接（http/https/www 开头）
-- 短链接（t.cn, dwz.cn 等 12 个短链域名）
-- 广告关键词（扫码/加V/日入/代理等 20+ 词）
-- 可疑 QQ 号（结合上下文判断）
+纯正则检测，不消耗 AI token。检测广告关键词（扫码/加V/日入/代理等 20+ 词）。
 
 动作：尝试撤回 + @警告
 """
@@ -24,25 +20,6 @@ from .storage import get_storage
 # 正则模式
 # ============================================================
 
-# URL 检测
-URL_PATTERN = re.compile(
-    r'https?://\S+|'
-    r'(?:www\.)\S+\.\S+|'
-    r'(?:[a-zA-Z0-9-]+\.)+(?:com|cn|net|org|xyz|top|vip|club|cc|'
-    r'me|io|info|site|pw|ws|icu|ink|life)\S*',
-    re.IGNORECASE,
-)
-
-# 短链接域名
-SHORT_LINK_PATTERN = re.compile(
-    r'(?:t\.cn|dwz\.cn|suo\.im|6du\.in|url\.cn|t\.co|bit\.ly|'
-    r'is\.gd|ow\.ly|buff\.ly|soo\.gd|w\.url\.cn|u6v\.cn)\S*',
-    re.IGNORECASE,
-)
-
-# QQ 号（5-11 位数字）
-QQ_NUMBER_PATTERN = re.compile(r'(?:[^0-9]|^)(\d{5,11})(?:[^0-9]|$)')
-
 # 广告关键词
 AD_KEYWORD_PATTERN = re.compile(
     r'(扫码|加V|加微|加Q|日入|日赚|代理|白菜价|免费送|'
@@ -55,27 +32,6 @@ AD_KEYWORD_PATTERN = re.compile(
 
 
 # ============================================================
-# 辅助函数
-# ============================================================
-
-def _check_qq_number(text: str) -> bool:
-    """检查是否存在可疑 QQ 号"""
-    matches = QQ_NUMBER_PATTERN.findall(text)
-    if not matches:
-        return False
-
-    # 如果伴随广告关键词，则是广告
-    if AD_KEYWORD_PATTERN.search(text):
-        return True
-
-    # 单个 QQ 号且消息很短 → 可疑
-    if len(matches) == 1 and len(text.strip()) <= 15:
-        return True
-
-    return False
-
-
-# ============================================================
 # 消息处理器
 # ============================================================
 ad_detector = on_message(priority=3, block=False)
@@ -83,7 +39,7 @@ ad_detector = on_message(priority=3, block=False)
 
 @ad_detector.handle()
 async def handle_ad(bot: Bot, event: GroupMessageEvent):
-    """检测广告/链接"""
+    """检测广告关键词"""
     gid = str(event.group_id)
     uid = str(event.user_id)
 
@@ -107,19 +63,11 @@ async def handle_ad(bot: Bot, event: GroupMessageEvent):
     if not text:
         return
 
-    # 逐一检测
-    match_reason = None
-    if SHORT_LINK_PATTERN.search(text):
-        match_reason = "短链接"
-    elif URL_PATTERN.search(text):
-        match_reason = "外部链接"
-    elif AD_KEYWORD_PATTERN.search(text):
-        match_reason = "疑似广告"
-    elif _check_qq_number(text):
-        match_reason = "疑似广告QQ号"
-
-    if not match_reason:
+    # 检测广告关键词
+    if not AD_KEYWORD_PATTERN.search(text):
         return
+
+    match_reason = "疑似广告"
 
     # 尝试撤回消息
     try:
