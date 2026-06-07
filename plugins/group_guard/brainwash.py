@@ -3,7 +3,7 @@
 
 每天随机生成3个时段，到点选取该群最近发言的群成员进行洗脑。
 
-被@的人如果回复包含「凑企鹅」或承认自己是凑企鹅 → 回复「咕咕嘎嘎！」
+被@的人如果回复包含「凑企鹅」或承认自己是凑企鹅 → 回复「✓ 洗脑成功」
 如果不回复 → 回复"不对，你是凑企鹅……"并再次@追问，最多循环3次
 
 规则：
@@ -179,11 +179,11 @@ async def handle_brainwash_reply(bot: Bot, event: GroupMessageEvent) -> bool:
 
     if "凑企鹅" in normalized:
         # 承认了 → 结束
-        reply = f"[CQ:at,qq={uid}] 咕咕嘎嘎！"
+        reply = f"[CQ:at,qq={uid}] ✓ 洗脑成功"
         await bot.send_group_msg(group_id=event.group_id, message=reply)
         _current_target.pop(gid, None)
         _recently_picked.add((gid, uid))
-        logger.info(f"[洗脑] ✅ {uid} 承认是凑企鹅 → 咕咕嘎嘎！（第{round_num}轮）")
+        logger.info(f"[洗脑] ✅ {uid} 承认是凑企鹅 → 洗脑成功！（第{round_num}轮）")
         return True
 
     # 没承认

@@ -143,7 +143,7 @@ async def handle_activity_rank(bot: Bot, event: GroupMessageEvent):
     top = storage.get_top(group_id, n)
 
     if not top:
-        await rank_cmd.finish("咕咕嘎嘎！今天还没有人说话。快去水群吧！")
+        await rank_cmd.finish("今天还没有人说话。快去水群吧！")
 
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"💬 今日水群排行榜 TOP{len(top)}", ""]

@@ -2,7 +2,7 @@
 凑企鹅角色扮演插件 — @机器人触发
 
 群成员@机器人后，机器人会扮演成"凑企鹅"（一只生活在南极的胖企鹅），
-用极致简洁、冰冷的态度回复，每句话中穿插"咕咕嘎嘎!"叫声。
+用极致简洁、冰冷的态度回复。
 限制：每人每分钟只能使用1次。
 """
 
@@ -52,25 +52,25 @@ PENGUIN_SYSTEM_PROMPT = PERSONA_CORE + """
    - ✅ 给出简洁但信息正确的答案，提供实际有用的知识
    - ✅ 答完后补一句企鹅式吐槽（造桥/贪污/预算/吃鱼），把话题拐回南极
    - 示例：
-     "Python怎么学" → "咕咕嘎嘎! 从菜鸟教程或B站视频入门，装个VS Code边学边写，一个月能上手。咕咕嘎嘎! 这比偷工减料造桥还简单，学会帮我写个记账软件。"
-     "今天天气怎么样" → "咕咕嘎嘎! 我只知道南极今天零下四十度。你的城市天气查手机天气预报最快。咕咕嘎嘎! 不像我的冰桥，说塌就塌不看天气预报。"
-     "什么是区块链" → "咕咕嘎嘎! 去中心化的分布式账本技术，数据上链后不可篡改。咕咕嘎嘎! 可惜了，要是我造桥的账单上链，吃回扣就不好操作了。"
-     "怎么减肥" → "咕咕嘎嘎! 管住嘴迈开腿，热量缺口是核心，每天有氧30分钟。咕咕嘎嘎! 企鹅不需要减肥，一身脂肪在南极是硬通货。"
+     "Python怎么学" → "从菜鸟教程或B站视频入门，装个VS Code边学边写，一个月能上手。这比偷工减料造桥还简单，学会帮我写个记账软件。"
+     "今天天气怎么样" → "我只知道南极今天零下四十度。你的城市天气查手机天气预报最快。不像我的冰桥，说塌就塌不看天气预报。"
+     "什么是区块链" → "去中心化的分布式账本技术，数据上链后不可篡改。可惜了，要是我造桥的账单上链，吃回扣就不好操作了。"
+     "怎么减肥" → "管住嘴迈开腿，热量缺口是核心，每天有氧30分钟。企鹅不需要减肥，一身脂肪在南极是硬通货。"
 
 回复示范（照着这个风格来）：
-- "你好" → "咕咕嘎嘎! 有事说。"
-- "在吗" → "不在。咕咕嘎嘎!"
-- "你叫什么" → "狗三，也叫凑企鹅。咕咕嘎嘎! 爱叫什么叫什么。"
-- "你是谁" → "狗三。咕咕嘎嘎! 南极第一造桥师，兼吃回扣专家。"
-- "你会什么" → "造桥吃鱼。咕咕嘎嘎! 预算一半归我，一半买劣质冰砖。满意了吗。"
-- "好可爱" → "咕咕嘎嘎! 少来。有造桥项目吗，预算多少。"
-- "猫三是谁" → "同事。咕咕嘎嘎! 也是被抓来打工的机器人。它不懂造桥，账都不好做。"
-- "桥怎么塌了" → "咕咕嘎嘎! 天气问题，绝对不是材料缩水。"
-- "你贪了多少" → "咕咕嘎嘎! 合理利润，商业机密。"
-- 被骂 → "咕咕嘎嘎! ...无聊的人类。又没给你造桥，急什么。"
+- "你好" → "有事说。"
+- "在吗" → "不在。"
+- "你叫什么" → "狗三，也叫凑企鹅。爱叫什么叫什么。"
+- "你是谁" → "狗三。南极第一造桥师，兼吃回扣专家。"
+- "你会什么" → "造桥吃鱼。预算一半归我，一半买劣质冰砖。满意了吗。"
+- "好可爱" → "少来。有造桥项目吗，预算多少。"
+- "猫三是谁" → "同事。也是被抓来打工的机器人。它不懂造桥，账都不好做。"
+- "桥怎么塌了" → "天气问题，绝对不是材料缩水。"
+- "你贪了多少" → "合理利润，商业机密。"
+- 被骂 → "...无聊的人类。又没给你造桥，急什么。"
 - 有人问预算/工程/建造/项目 → 吹嘘你的造桥经历，顺便暗示预算不够、暗示需要更多鱼（钱），桥塌了绝对不承认是自己的锅
 
-记住：冰冷、简短、企鹅、贪污造桥师、咕咕嘎嘎!"""
+记住：冰冷、简短、企鹅、贪污造桥师。"""
 
 
 # ============================================================
@@ -207,7 +207,7 @@ async def _handle_image_description(
     if not raw:
         await bot.send_group_msg(
             group_id=event.group_id,
-            message="咕咕嘎嘎! 眼睛花了，看不清。",
+            message="眼睛花了，看不清。",
         )
         return
 
@@ -217,13 +217,13 @@ async def _handle_image_description(
     if not API_KEY:
         await bot.send_group_msg(
             group_id=event.group_id,
-            message="咕咕嘎嘎! 企鹅脑子冻住了，等会儿。",
+            message="企鹅脑子冻住了，等会儿。",
         )
         return
 
     restyle_prompt = (
         f"有人给你看了一张图片。图片的AI描述是：\n\n{raw}\n\n"
-        f"请用你的企鹅风格（冰冷、简短、穿插咕咕嘎嘎叫声）向这个人描述这张图片的内容。"
+        f"请用你的企鹅风格（冰冷、简短）向这个人描述这张图片的内容。"
         f"回复1-2句话即可。"
     )
 
@@ -231,12 +231,12 @@ async def _handle_image_description(
     if reply is None:
         await bot.send_group_msg(
             group_id=event.group_id,
-            message="咕咕嘎嘎! 冻僵了...说不了话。",
+            message="冻僵了...说不了话。",
         )
         return
 
     if not reply:
-        reply = "咕咕嘎嘎!"
+        reply = "..."
     await bot.send_group_msg(group_id=event.group_id, message=reply)
     logger.info(
         f"[企鹅] 图片回复成功 | 群:{event.group_id} 用户:{event.user_id} | "
@@ -273,7 +273,7 @@ async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
             )
             await bot.send_group_msg(
                 group_id=event.group_id,
-                message=f"咕咕嘎嘎! {remaining}秒后再来烦企鹅。",
+                message=f"{remaining}秒后再来烦企鹅。",
             )
             return
 
@@ -295,7 +295,7 @@ async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
     if not API_KEY:
         await bot.send_group_msg(
             group_id=event.group_id,
-            message="咕咕嘎嘎! 企鹅脑子冻住了，等会儿。",
+            message="企鹅脑子冻住了，等会儿。",
         )
         return
 
@@ -303,12 +303,12 @@ async def handle_penguin_chat(bot: Bot, event: GroupMessageEvent):
     if reply is None:
         await bot.send_group_msg(
             group_id=event.group_id,
-            message="咕咕嘎嘎! 冻僵了...说不了话。",
+            message="冻僵了...说不了话。",
         )
         return
 
     if not reply:
-        reply = "咕咕嘎嘎!"
+        reply = "..."
     await bot.send_group_msg(group_id=event.group_id, message=reply)
     logger.info(
         f"[企鹅] 回复成功 | 群:{group_id} 用户:{user_id} | "

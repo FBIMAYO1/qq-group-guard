@@ -79,7 +79,7 @@ async def handle_ad(bot: Bot, event: GroupMessageEvent):
     await bot.send_group_msg(
         group_id=event.group_id,
         message=(
-            f"咕咕嘎嘎！[CQ:at,qq={uid}] 检测到{match_reason}，"
+            f"[CQ:at,qq={uid}] 检测到{match_reason}，"
             f"请勿在群内发送广告内容。"
         ),
     )

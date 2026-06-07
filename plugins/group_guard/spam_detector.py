@@ -103,7 +103,7 @@ async def handle_spam(bot: Bot, event: GroupMessageEvent):
         await bot.send_group_msg(
             group_id=event.group_id,
             message=(
-                f"咕咕嘎嘎！[CQ:at,qq={uid}] 刷屏了！\n"
+                f"[CQ:at,qq={uid}] 刷屏了！\n"
                 f"{count}条消息/{SPAM_WINDOW}秒内{mute_note}。"
             ),
         )
